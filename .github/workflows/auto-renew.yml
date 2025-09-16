@@ -34,6 +34,7 @@ jobs:
       env:
         REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
         HIDENCLOUD_SERVERS: ${{ secrets.HIDENCLOUD_SERVERS }}
+        HIDENCLOUD_ACCOUNT: ${{ secrets.HIDENCLOUD_ACCOUNT }}
       run: |
         python main.py
     
