@@ -129,45 +129,86 @@ class HidenCloudLogin:
             for selector in checkbox_selectors:
                 try:
                     checkbox = page.locator(selector).first
-                    if checkbox.is_visible(timeout=2000):
+                    if checkbox.is_visible(timeout=5000):
                         logger.info(f"找到 Cloudflare 验证复选框: {selector}")
+                        
+                        # 滚动到元素可见位置
+                        checkbox.scroll_into_view_if_needed()
+                        time.sleep(1)
+                        
+                        # 点击复选框
                         checkbox.click()
                         logger.info("✅ 已点击 Cloudflare 验证复选框")
                         checkbox_found = True
                         break
                 except Exception as e:
-                    logger.debug(f"选择器 {selector} 未找到复选框: {str(e)}")
+                    logger.info(f"选择器 {selector} 未找到复选框: {str(e)}")
                     continue
             
             # 如果复选框点击失败，尝试点击 label
             if not checkbox_found:
+                logger.info("尝试点击 label 标签...")
                 for selector in label_selectors:
                     try:
                         label = page.locator(selector).first
-                        if label.is_visible(timeout=2000):
+                        if label.is_visible(timeout=5000):
                             logger.info(f"找到 Cloudflare 验证标签: {selector}")
+                            
+                            # 滚动到元素可见位置
+                            label.scroll_into_view_if_needed()
+                            time.sleep(1)
+                            
+                            # 点击标签
                             label.click()
                             logger.info("✅ 已点击 Cloudflare 验证标签")
                             checkbox_found = True
                             break
                     except Exception as e:
-                        logger.debug(f"选择器 {selector} 未找到标签: {str(e)}")
+                        logger.info(f"选择器 {selector} 未找到标签: {str(e)}")
                         continue
             
             if checkbox_found:
                 # 等待验证完成
                 logger.info("等待 Cloudflare 验证完成...")
-                time.sleep(10)  # 增加等待时间
-            
+                time.sleep(15)  # 增加等待时间到15秒
+                
+                # 检查验证是否真的完成
+                max_attempts = 6  # 最多等待30秒（6次 * 5秒）
+                for attempt in range(max_attempts):
+                    current_url = page.url
+                    logger.info(f"检查验证状态 (第{attempt+1}次): {current_url}")
+                    
+                    # 检查是否还有验证元素
+                    try:
+                        verification_text = page.locator('text="Verify you are human"').first
+                        if not verification_text.is_visible(timeout=2000):
+                            logger.info("✅ Cloudflare 验证已完成，验证文本消失")
+                            break
+                        else:
+                            logger.info("验证页面仍然存在，继续等待...")
+                    except:
+                        logger.info("✅ 验证元素不可见，可能已通过验证")
+                        break
+                    
+                    if attempt < max_attempts - 1:
+                        time.sleep(5)
+                
             if not checkbox_found:
                 logger.info("未找到 Cloudflare 验证复选框，可能已经通过验证")
             
-            # 检查是否还在验证页面
+            # 最终检查页面状态
             current_url = page.url
             if "dash.hidencloud.com" in current_url and "/service/" in current_url:
                 logger.info("✅ 已通过 Cloudflare 验证，进入目标页面")
             else:
                 logger.warning(f"可能仍在验证中，当前URL: {current_url}")
+                # 截图调试
+                try:
+                    debug_filename = f"img/cf_debug_{int(time.time())}.png"
+                    page.screenshot(path=debug_filename)
+                    logger.info(f"已保存调试截图: {debug_filename}")
+                except:
+                    pass
                 
         except Exception as e:
             logger.warning(f"处理 Cloudflare 验证时出错: {str(e)}")
