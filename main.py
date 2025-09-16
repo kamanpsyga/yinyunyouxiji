@@ -74,8 +74,12 @@ class HidenCloudLogin:
             logger.info("等待 Cloudflare 验证和页面加载完成...")
             time.sleep(15)  # 等待15秒让CF验证完成
             
-            # 等待页面网络空闲状态
-            page.wait_for_load_state('networkidle', timeout=30000)
+            # 尝试等待页面网络空闲状态，但不强制要求
+            try:
+                page.wait_for_load_state('networkidle', timeout=60000)  # 增加到60秒
+                logger.info("页面网络空闲状态达成")
+            except Exception as e:
+                logger.warning(f"等待网络空闲超时，继续截图: {str(e)}")
             
             # 再等待几秒确保页面渲染完成
             time.sleep(5)
@@ -85,11 +89,19 @@ class HidenCloudLogin:
             filename = f"img/login_success_{server_name}_{timestamp}.png"
             
             # 截图
-            page.screenshot(path=filename)
+            page.screenshot(path=filename, full_page=True)  # 添加全页面截图
             logger.info(f"📸 截图已保存: {filename}")
             
         except Exception as e:
             logger.error(f"截图保存失败: {str(e)}")
+            # 尝试简单截图作为备用
+            try:
+                timestamp = time.strftime('%Y%m%d_%H%M%S')
+                filename = f"img/fallback_{server_name}_{timestamp}.png"
+                page.screenshot(path=filename)
+                logger.info(f"📸 备用截图已保存: {filename}")
+            except Exception as fallback_e:
+                logger.error(f"备用截图也失败: {str(fallback_e)}")
     
     def _take_debug_screenshot(self, page: Page, server_name: str):
         """截图保存失败状态用于调试"""
