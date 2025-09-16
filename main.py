@@ -267,33 +267,29 @@ class HidenCloudLogin:
                     server_url = first_server['url']
                     server_name = first_server.get('name', f"服务器{first_server['id']}")
                     
-                    logger.info(f"正在访问服务器: {server_name} ({server_url})")
+                    logger.info(f"正在使用 Cookie 访问服务器: {server_name} ({server_url})")
                     
-                    # 增加超时时间，因为可能有 CF 验证
                     try:
-                        page.goto(server_url, wait_until='networkidle', timeout=60000)  # 60秒超时
+                        page.goto(server_url, wait_until='networkidle', timeout=60000)
                         logger.info("页面加载完成")
+                        
+                        # 检查是否被重定向到登录页面
+                        current_url = page.url
+                        logger.info(f"当前页面URL: {current_url}")
+                        
+                        if "/auth/login" in current_url:
+                            logger.error("❌ Cookie 登录失败或会话已过期，页面被重定向到登录页面")
+                            page.context.clear_cookies()
+                            return False
+                        else:
+                            logger.info("✅ Cookie 登录成功！")
+                            
+                            # 截图保存
+                            self._take_screenshot(page, server_name)
+                            return True
+                            
                     except Exception as e:
-                        logger.warning(f"页面加载超时，尝试继续: {str(e)}")
-                        # 即使超时也尝试继续，可能页面已经部分加载
-                    
-                    # 处理 CF 验证
-                    logger.info("检查并处理 Cloudflare 安全验证...")
-                    self._handle_cloudflare_verification(page)
-                    time.sleep(10)  # 等待验证完成
-                    
-                    # 验证是否成功访问
-                    if self._verify_access(page, server_url):
-                        logger.info(f"自动登录成功！已成功访问 {server_name}")
-                        
-                        # 截图保存
-                        self._take_screenshot(page, server_name)
-                        
-                        return True
-                    else:
-                        logger.error(f"登录失败：无法访问 {server_name}")
-                        # 截图失败状态用于调试
-                        self._take_debug_screenshot(page, server_name)
+                        logger.error(f"访问页面时发生错误: {str(e)}")
                         return False
                 else:
                     logger.error("Cookie 设置失败")
@@ -311,10 +307,6 @@ class HidenCloudLogin:
     def _set_cookies(self, page: Page) -> bool:
         """设置登录 Cookie"""
         try:
-            # 先访问基础域名以设置 Cookie
-            logger.info(f"正在访问基础域名: {self.base_url}")
-            page.goto(self.base_url, wait_until='networkidle')
-            
             # 创建 Cookie 对象，属性已预定义
             # 设置过期时间为当前时间 + 1年，实现自动续期
             cookie = {
@@ -331,7 +323,6 @@ class HidenCloudLogin:
             # 设置 Cookie
             logger.info("正在设置登录 Cookie...")
             page.context.add_cookies([cookie])
-            
             logger.info("Cookie 设置成功！")
             return True
             
@@ -339,23 +330,6 @@ class HidenCloudLogin:
             logger.error(f"设置 Cookie 时出错: {str(e)}")
             return False
     
-    def _verify_access(self, page: Page, target_url: str) -> bool:
-        """验证页面访问是否成功"""
-        try:
-            current_url = page.url
-            logger.info(f"当前页面URL: {current_url}")
-            
-            # 检查是否被重定向到登录页面
-            if "/auth/login" in current_url:
-                logger.error("页面被重定向到登录页面，Cookie 已失效")
-                return False
-            
-            logger.info("✅ Cookie 登录验证成功")
-            return True
-            
-        except Exception as e:
-            logger.error(f"验证页面访问时出错: {str(e)}")
-            return False
     
 def main():
     """主函数"""
