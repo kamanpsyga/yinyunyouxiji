@@ -1,469 +1,379 @@
 #!/usr/bin/env python3
 """
 HidenCloud 自动登录脚本
-使用 Playwright 自动化登录到 https://dash.hidencloud.com
 """
 
 import os
 import sys
 import time
 import logging
-from typing import Optional
-from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
-from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright, Page
 
-# 加载环境变量
-load_dotenv()
-
-# 配置日志（只输出到控制台）
+# =====================================================================
+#                          日志配置
+# =====================================================================
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
 
 
+# =====================================================================
+#                       HidenCloud 自动登录类
+# =====================================================================
 class HidenCloudLogin:
-    """HidenCloud 自动登录"""
+    """HidenCloud 自动登录主类"""
     
     def __init__(self):
+        """【步骤1】初始化配置"""
+        # 基础网站配置
         self.base_url = "https://dash.hidencloud.com"
         self.login_url = "https://dash.hidencloud.com/auth/login"
         
-        # 加载服务器配置
-        self.servers = self._load_server_config()
+        # 【步骤1.1】加载并解析服务器配置
+        self._load_server_config()
         
-        # 检查环境变量（Cookie 优先，账号密码作为备选）
+        # 【步骤1.2】加载并解析登录凭据
+        self._load_credentials()
+        
+        # 【步骤1.3】验证配置完整性
+        self._validate_config()
+    
+    # =================================================================
+    #                       配置加载方法组
+    # =================================================================
+    
+    def _load_server_config(self):
+        """【配置加载1】获取服务器配置"""
+        try:
+            # 获取环境变量中的服务器配置JSON
+            server_json = os.getenv('HIDENCLOUD_SERVERS')
+            if not server_json:
+                raise ValueError("未设置环境变量 HIDENCLOUD_SERVERS")
+            
+            # 解析JSON配置
+            import json
+            servers = json.loads(server_json)
+            if not servers:
+                raise ValueError("服务器配置为空")
+            
+            # 提取第一个服务器的配置信息
+            server = servers[0]
+            self.server_url = server['url']
+            self.server_name = server.get('name', f"服务器{server['id']}")
+            
+            logger.info(f"✅ 服务器配置加载成功: {self.server_name} ({self.server_url})")
+            
+        except json.JSONDecodeError as e:
+            raise ValueError(f"❌ 服务器配置JSON解析失败: {str(e)}")
+        except Exception as e:
+            raise ValueError(f"❌ 加载服务器配置失败: {str(e)}")
+    
+    def _load_credentials(self):
+        """【配置加载2】加载登录凭据"""
+        # 方式1：Cookie 登录凭据（优先级较高，速度快）
         self.cookie_value = os.getenv('REMEMBER_WEB_COOKIE')
-        account_info = os.getenv('HIDENCLOUD_ACCOUNT')
+        if self.cookie_value:
+            logger.info("✅ Cookie 登录凭据已加载")
+        else:
+            logger.warning("⚠️  未找到 Cookie 登录凭据")
         
-        # 解析账号信息
+        # 方式2：邮箱密码登录凭据（备用方案，兼容性好）
+        account_info = os.getenv('HIDENCLOUD_ACCOUNT')
         if account_info:
             try:
                 self.email, self.password = account_info.split(':')
+                logger.info("✅ 邮箱密码登录凭据已加载")
             except ValueError:
-                logger.error("HIDENCLOUD_ACCOUNT 格式错误，应为 'email:password'")
+                logger.error("❌ HIDENCLOUD_ACCOUNT 格式错误，应为 'email:password'")
                 self.email = None
                 self.password = None
         else:
+            logger.warning("⚠️  未找到邮箱密码登录凭据")
             self.email = None
             self.password = None
-        
+    
+    def _validate_config(self):
+        """【配置加载3】验证配置完整性"""
         if not self.cookie_value and not (self.email and self.password):
-            raise ValueError("必须提供 REMEMBER_WEB_COOKIE 或 HIDENCLOUD_ACCOUNT（格式：email:password）")
+            raise ValueError("❌ 必须提供 REMEMBER_WEB_COOKIE 或 HIDENCLOUD_ACCOUNT（格式：email:password）")
         
-        if not self.servers:
-            raise ValueError("请设置环境变量 HIDENCLOUD_SERVERS")
+        logger.info("✅ 配置验证通过，登录凭据完整")
     
-    def _load_server_config(self):
-        """从环境变量加载服务器配置"""
-        try:
-            server_json = os.getenv('HIDENCLOUD_SERVERS')
-            if not server_json:
-                logger.error("未设置环境变量 HIDENCLOUD_SERVERS")
-                return []
-            
-            import json
-            servers = json.loads(server_json)
-            logger.info(f"从环境变量加载 {len(servers)} 个服务器配置")
-            return servers
-            
-        except json.JSONDecodeError as e:
-            logger.error(f"服务器配置JSON解析失败: {str(e)}")
-            return []
-        except Exception as e:
-            logger.error(f"加载服务器配置失败: {str(e)}")
-            return []
-    
-    def _take_screenshot(self, page: Page, server_name: str):
-        """截图保存到 img 文件夹"""
-        try:
-            # 确保 img 文件夹存在
-            os.makedirs('img', exist_ok=True)
-            
-            # 等待 CF 验证完成和页面完全加载
-            logger.info("等待 Cloudflare 验证和页面加载完成...")
-            time.sleep(15)  # 等待15秒让CF验证完成
-            
-            # 尝试等待页面网络空闲状态，但不强制要求
-            try:
-                page.wait_for_load_state('networkidle', timeout=60000)  # 增加到60秒
-                logger.info("页面网络空闲状态达成")
-            except Exception as e:
-                logger.warning(f"等待网络空闲超时，继续截图: {str(e)}")
-            
-            # 再等待几秒确保页面渲染完成
-            time.sleep(5)
-            
-            # 生成截图文件名
-            timestamp = time.strftime('%Y%m%d_%H%M%S')
-            filename = f"img/login_success_{server_name}_{timestamp}.png"
-            
-            # 截图
-            page.screenshot(path=filename, full_page=True)  # 添加全页面截图
-            logger.info(f"📸 截图已保存: {filename}")
-            
-        except Exception as e:
-            logger.error(f"截图保存失败: {str(e)}")
-            # 尝试简单截图作为备用
-            try:
-                timestamp = time.strftime('%Y%m%d_%H%M%S')
-                filename = f"img/fallback_{server_name}_{timestamp}.png"
-                page.screenshot(path=filename)
-                logger.info(f"📸 备用截图已保存: {filename}")
-            except Exception as fallback_e:
-                logger.error(f"备用截图也失败: {str(fallback_e)}")
-    
-    def _login_with_password(self, page: Page, server_url: str, server_name: str) -> bool:
-        """使用邮箱密码登录"""
-        try:
-            logger.info("正在尝试使用邮箱和密码登录...")
-            
-            # 访问登录页面
-            page.goto(self.login_url, wait_until="networkidle", timeout=60000)
-            logger.info("登录页面已加载")
-            
-            # 填写邮箱和密码
-            page.fill('input[name="email"]', self.email)
-            page.fill('input[name="password"]', self.password)
-            logger.info("邮箱和密码已填写")
-            
-            # 处理 Cloudflare Turnstile 人机验证
-            logger.info("正在处理 Cloudflare Turnstile 人机验证...")
-            try:
-                # 查找 iframe 中的验证复选框
-                turnstile_frame = page.frame_locator('iframe[src*="challenges.cloudflare.com"]')
-                checkbox = turnstile_frame.locator('input[type="checkbox"]')
-                
-                checkbox.wait_for(state="visible", timeout=30000)
-                checkbox.click()
-                logger.info("已点击人机验证复选框，等待验证结果...")
-                
-                # 等待验证完成
-                page.wait_for_function(
-                    "() => document.querySelector('[name=\"cf-turnstile-response\"]') && document.querySelector('[name=\"cf-turnstile-response\"]').value",
-                    timeout=60000
-                )
-                logger.info("✅ 人机验证成功！")
-                
-            except Exception as e:
-                logger.warning(f"Cloudflare 验证处理失败: {str(e)}")
-                # 继续尝试登录，有时验证会自动通过
-            
-            # 点击登录按钮
-            page.click('button[type="submit"]:has-text("Sign in to your account")')
-            logger.info("已点击登录按钮，等待页面跳转...")
-            
-            # 等待跳转到仪表板
-            page.wait_for_url(f"{self.base_url}/dashboard", timeout=60000)
-            
-            # 检查是否登录成功
-            if "/auth/login" in page.url:
-                logger.error("❌ 账号密码登录失败，请检查凭据是否正确")
-                return False
-            
-            logger.info("✅ 账号密码登录成功！")
-            
-            # 登录成功后访问目标服务器页面
-            logger.info(f"正在访问目标服务器: {server_name} ({server_url})")
-            page.goto(server_url, wait_until="networkidle", timeout=60000)
-            
-            # 截图保存
-            self._take_screenshot(page, server_name)
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ 账号密码登录过程中发生错误: {str(e)}")
-            return False
-    
-    def _handle_cloudflare_verification(self, page: Page):
-        """处理 Cloudflare 人机验证"""
-        try:
-            logger.info("正在检查 Cloudflare 验证...")
-            
-            # 等待页面稳定
-            time.sleep(3)
-            
-            # 查找 Cloudflare 验证复选框
-            checkbox_selectors = [
-                'label.cb-lb input[type="checkbox"]',  # 根据实际结构：label.cb-lb 内的 checkbox
-                'label:has-text("Verify you are human") input[type="checkbox"]'  # 英文版本
-            ]
-            
-            checkbox_found = False
-            
-            # 也尝试直接点击 label 标签
-            label_selectors = [
-                'label.cb-lb',                                    # 直接点击 label
-                'label:has-text("Verify you are human")'          # 英文版本
-            ]
-            
-            # 先尝试点击复选框
-            for selector in checkbox_selectors:
-                try:
-                    checkbox = page.locator(selector).first
-                    if checkbox.is_visible(timeout=5000):
-                        logger.info(f"找到 Cloudflare 验证复选框: {selector}")
-                        
-                        # 滚动到元素可见位置
-                        checkbox.scroll_into_view_if_needed()
-                        time.sleep(1)
-                        
-                        # 点击复选框
-                        checkbox.click()
-                        logger.info("✅ 已点击 Cloudflare 验证复选框")
-                        checkbox_found = True
-                        break
-                except Exception as e:
-                    logger.info(f"选择器 {selector} 未找到复选框: {str(e)}")
-                    continue
-            
-            # 如果复选框点击失败，尝试点击 label
-            if not checkbox_found:
-                logger.info("尝试点击 label 标签...")
-                for selector in label_selectors:
-                    try:
-                        label = page.locator(selector).first
-                        if label.is_visible(timeout=5000):
-                            logger.info(f"找到 Cloudflare 验证标签: {selector}")
-                            
-                            # 滚动到元素可见位置
-                            label.scroll_into_view_if_needed()
-                            time.sleep(1)
-                            
-                            # 点击标签
-                            label.click()
-                            logger.info("✅ 已点击 Cloudflare 验证标签")
-                            checkbox_found = True
-                            break
-                    except Exception as e:
-                        logger.info(f"选择器 {selector} 未找到标签: {str(e)}")
-                        continue
-            
-            if checkbox_found:
-                # 等待验证完成
-                logger.info("等待 Cloudflare 验证完成...")
-                time.sleep(15)  # 增加等待时间到15秒
-                
-                # 检查验证是否真的完成
-                max_attempts = 6  # 最多等待30秒（6次 * 5秒）
-                for attempt in range(max_attempts):
-                    current_url = page.url
-                    logger.info(f"检查验证状态 (第{attempt+1}次): {current_url}")
-                    
-                    # 检查是否还有验证元素
-                    try:
-                        verification_text = page.locator('text="Verify you are human"').first
-                        if not verification_text.is_visible(timeout=2000):
-                            logger.info("✅ Cloudflare 验证已完成，验证文本消失")
-                            break
-                        else:
-                            logger.info("验证页面仍然存在，继续等待...")
-                    except:
-                        logger.info("✅ 验证元素不可见，可能已通过验证")
-                        break
-                    
-                    if attempt < max_attempts - 1:
-                        time.sleep(5)
-                
-            if not checkbox_found:
-                logger.info("未找到 Cloudflare 验证复选框，可能已经通过验证")
-            
-            # 最终检查页面状态
-            current_url = page.url
-            if "dash.hidencloud.com" in current_url and "/service/" in current_url:
-                logger.info("✅ 已通过 Cloudflare 验证，进入目标页面")
-            else:
-                logger.warning(f"可能仍在验证中，当前URL: {current_url}")
-                # 截图调试
-                try:
-                    debug_filename = f"img/cf_debug_{int(time.time())}.png"
-                    page.screenshot(path=debug_filename)
-                    logger.info(f"已保存调试截图: {debug_filename}")
-                except:
-                    pass
-                
-        except Exception as e:
-            logger.warning(f"处理 Cloudflare 验证时出错: {str(e)}")
-    
-    def _take_debug_screenshot(self, page: Page, server_name: str):
-        """截图保存失败状态用于调试"""
-        try:
-            # 确保 img 文件夹存在
-            os.makedirs('img', exist_ok=True)
-            
-            # 生成调试截图文件名
-            timestamp = time.strftime('%Y%m%d_%H%M%S')
-            filename = f"img/debug_failed_{server_name}_{timestamp}.png"
-            
-            # 截图当前状态
-            page.screenshot(path=filename)
-            logger.info(f"🔍 调试截图已保存: {filename}")
-            
-            # 同时记录当前URL用于调试
-            current_url = page.url
-            logger.info(f"🔍 当前页面URL: {current_url}")
-            
-        except Exception as e:
-            logger.error(f"调试截图保存失败: {str(e)}")
+    # =================================================================
+    #                       主要登录流程
+    # =================================================================
     
     def login(self, headless: bool = True) -> bool:
-        """使用 Cookie 自动登录"""
+        """【步骤2】主登录流程"""
         try:
+            logger.info("🚀 开始执行登录流程...")
+            
             with sync_playwright() as p:
-                # 启动浏览器
+                # 【步骤2.1】启动浏览器并配置环境
                 browser = p.chromium.launch(
                     headless=headless,
                     args=[
-                        '--no-sandbox',
-                        '--disable-dev-shm-usage',
-                        '--disable-blink-features=AutomationControlled'
+                        '--no-sandbox',              # 沙盒模式（CI环境需要）
+                        '--disable-dev-shm-usage',   # 禁用开发共享内存
+                        '--disable-blink-features=AutomationControlled'  # 隐藏自动化特征
                     ]
                 )
+                logger.info("✅ 浏览器启动成功")
                 
-                # 创建上下文
+                # 【步骤2.2】创建浏览器上下文（模拟真实用户环境）
                 context = browser.new_context(
                     viewport={'width': 1920, 'height': 1080},
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 )
+                logger.info("✅ 浏览器上下文创建成功")
                 
-                # 创建页面
+                # 【步骤2.3】创建页面实例
                 page = context.new_page()
+                logger.info("✅ 页面实例创建成功")
                 
-                # 优先尝试 Cookie 登录
-                if self.cookie_value:
-                    logger.info("检测到 REMEMBER_WEB_COOKIE，尝试使用 Cookie 登录")
-                    success = self._set_cookies(page)
-                    
-                    if success:
-                        # 访问第一个服务器进行验证
-                        first_server = self.servers[0]
-                        server_url = first_server['url']
-                        server_name = first_server.get('name', f"服务器{first_server['id']}")
-                        
-                        logger.info(f"正在使用 Cookie 访问服务器: {server_name} ({server_url})")
-                        
-                        try:
-                            page.goto(server_url, wait_until='networkidle', timeout=60000)
-                            logger.info("页面加载完成")
-                            
-                            # 检查是否被重定向到登录页面
-                            current_url = page.url
-                            logger.info(f"当前页面URL: {current_url}")
-                            
-                            if "/auth/login" in current_url:
-                                logger.warning("❌ Cookie 登录失败或会话已过期，将回退到账号密码登录")
-                                page.context.clear_cookies()
-                                # 回退到账号密码登录
-                                if self.email and self.password:
-                                    return self._login_with_password(page, server_url, server_name)
-                                else:
-                                    logger.error("Cookie 无效且未提供 HIDENCLOUD_ACCOUNT，无法继续登录")
-                                    return False
-                            else:
-                                logger.info("✅ Cookie 登录成功！")
-                                
-                                # 截图保存
-                                self._take_screenshot(page, server_name)
-                                return True
-                                
-                        except Exception as e:
-                            logger.warning(f"Cookie 访问页面时发生错误: {str(e)}")
-                            # 回退到账号密码登录
-                            if self.email and self.password:
-                                logger.info("回退到账号密码登录")
-                                first_server = self.servers[0]
-                                server_url = first_server['url']
-                                server_name = first_server.get('name', f"服务器{first_server['id']}")
-                                return self._login_with_password(page, server_url, server_name)
-                            else:
-                                logger.error("Cookie 访问失败且未提供 HIDENCLOUD_ACCOUNT")
-                                return False
-                    else:
-                        logger.error("Cookie 设置失败")
-                        if self.email and self.password:
-                            logger.info("回退到账号密码登录")
-                            first_server = self.servers[0]
-                            server_url = first_server['url']
-                            server_name = first_server.get('name', f"服务器{first_server['id']}")
-                            return self._login_with_password(page, server_url, server_name)
-                        else:
-                            return False
+                # 【步骤2.4】执行智能登录策略
+                logger.info("🔐 开始尝试登录...")
+                
+                # 策略1：优先尝试Cookie登录（速度快，成功率高）
+                if self._try_cookie_login(page):
+                    logger.info("🎉 Cookie登录成功完成！")
+                    return True
+                
+                # 策略2：Cookie失败时尝试邮箱密码登录（兼容性好）
+                elif self._try_password_login(page):
+                    logger.info("🎉 邮箱密码登录成功完成！")
+                    return True
+                
+                # 策略3：所有方式都失败
                 else:
-                    # 没有 Cookie，直接使用账号密码登录
-                    logger.info("未提供 REMEMBER_WEB_COOKIE，使用账号密码登录")
-                    if self.email and self.password:
-                        first_server = self.servers[0]
-                        server_url = first_server['url']
-                        server_name = first_server.get('name', f"服务器{first_server['id']}")
-                        return self._login_with_password(page, server_url, server_name)
-                    else:
-                        logger.error("未提供 Cookie 和 HIDENCLOUD_ACCOUNT，无法登录")
-                        return False
+                    logger.error("❌ 所有登录方式均失败")
+                    return False
                     
         except Exception as e:
-            logger.error(f"登录过程中发生错误: {str(e)}")
+            logger.error(f"❌ 登录过程中发生错误: {str(e)}")
             return False
-        finally:
-            try:
-                browser.close()
-            except:
-                pass
     
-    def _set_cookies(self, page: Page) -> bool:
-        """设置登录 Cookie"""
+    # =================================================================
+    #                      Cookie 登录方法组
+    # =================================================================
+    
+    def _try_cookie_login(self, page: Page) -> bool:
+        """【登录策略1】Cookie 快速登录"""
+        if not self.cookie_value:
+            logger.info("⏭️  未提供 Cookie，跳过 Cookie 登录")
+            return False
+        
+        logger.info("🍪 开始尝试 Cookie 登录...")
+        
+        # 【Cookie登录步骤1】设置认证Cookie
+        if not self._set_cookies(page):
+            logger.error("❌ Cookie 设置失败")
+            return False
+        
+        # 【Cookie登录步骤2】访问目标服务器页面
         try:
-            # 创建 Cookie 对象，属性已预定义
-            # 设置过期时间为当前时间 + 1年，实现自动续期
-            cookie = {
-                "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
-                "value": self.cookie_value,
-                "domain": "dash.hidencloud.com",
-                "path": "/",
-                "expires": int(time.time()) + 3600 * 24 * 365,
-                "httpOnly": True,
-                "secure": True,
-                "sameSite": "Lax"
-            }
+            logger.info(f"🌐 正在访问目标页面: {self.server_url}")
+            page.goto(self.server_url, wait_until='networkidle', timeout=60000)
+            logger.info("✅ 页面加载完成")
             
-            # 设置 Cookie
-            logger.info("正在设置登录 Cookie...")
-            page.context.add_cookies([cookie])
-            logger.info("Cookie 设置成功！")
+            # 【Cookie登录步骤3】验证登录状态
+            if self._is_login_required(page):
+                logger.warning("⚠️  Cookie 已失效，需要重新登录")
+                page.context.clear_cookies()  # 清除失效Cookie
+                return False
+            
+            # 【Cookie登录步骤4】登录成功处理
+            logger.info("✅ Cookie 登录成功！")
+            self._take_screenshot(page, "cookie_success")
             return True
             
         except Exception as e:
-            logger.error(f"设置 Cookie 时出错: {str(e)}")
+            logger.warning(f"⚠️  Cookie 登录失败: {str(e)}")
             return False
     
+    # =================================================================
+    #                     邮箱密码登录方法组
+    # =================================================================
     
+    def _try_password_login(self, page: Page) -> bool:
+        """【登录策略2】邮箱密码登录"""
+        if not (self.email and self.password):
+            logger.error("❌ 未提供邮箱密码，无法执行密码登录")
+            return False
+        
+        logger.info("📧 开始尝试邮箱密码登录...")
+        
+        try:
+            # 【密码登录步骤1】访问登录页面
+            logger.info(f"🌐 正在访问登录页面: {self.login_url}")
+            page.goto(self.login_url, wait_until="networkidle", timeout=60000)
+            logger.info("✅ 登录页面加载完成")
+            
+            # 【密码登录步骤2】填写登录表单
+            logger.info("📝 正在填写登录信息...")
+            page.fill('input[name="email"]', self.email)
+            page.fill('input[name="password"]', self.password)
+            logger.info("✅ 登录信息填写完成")
+            
+            # 【密码登录步骤3】处理 Cloudflare 验证（如果存在）
+            self._handle_cloudflare_verification(page)
+            
+            # 【密码登录步骤4】提交登录表单
+            logger.info("🚀 正在提交登录表单...")
+            page.click('button[type="submit"]:has-text("Sign in to your account")')
+            logger.info("✅ 登录表单已提交，等待系统响应...")
+            
+            # 【密码登录步骤5】等待登录完成并跳转
+            page.wait_for_url(f"{self.base_url}/dashboard", timeout=60000)
+            logger.info("✅ 成功跳转到控制面板")
+            
+            # 【密码登录步骤6】验证登录状态
+            if self._is_login_required(page):
+                logger.error("❌ 登录验证失败，请检查账号密码")
+                self._take_screenshot(page, "password_failed")
+                return False
+            
+            logger.info("✅ 邮箱密码登录验证成功！")
+            
+            # 【密码登录步骤7】访问目标服务器页面
+            logger.info(f"🌐 正在访问目标服务器: {self.server_url}")
+            page.goto(self.server_url, wait_until="networkidle", timeout=60000)
+            self._take_screenshot(page, "password_success")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 邮箱密码登录失败: {str(e)}")
+            self._take_screenshot(page, "password_failed")
+            return False
+    
+    # =================================================================
+    #                        辅助工具方法组
+    # =================================================================
+    
+    def _set_cookies(self, page: Page) -> bool:
+        """【辅助工具1】设置登录 Cookie"""
+        try:
+            # 构建标准的Cookie对象
+            cookie = {
+                "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",  # HidenCloud记住登录的Cookie名称
+                "value": self.cookie_value,                                      # Cookie值
+                "domain": "dash.hidencloud.com",                                # 作用域
+                "path": "/",                                                    # 路径
+                "expires": int(time.time()) + 3600 * 24 * 365,                 # 有效期：1年
+                "httpOnly": True,                                               # 仅HTTP访问
+                "secure": True,                                                 # 仅HTTPS传输
+                "sameSite": "Lax"                                              # 跨站策略
+            }
+            
+            # 将Cookie添加到浏览器上下文
+            page.context.add_cookies([cookie])
+            logger.info("✅ Cookie 设置完成")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Cookie 设置失败: {str(e)}")
+            return False
+    
+    def _handle_cloudflare_verification(self, page: Page):
+        """【辅助工具2】处理 Cloudflare Turnstile 验证"""
+        logger.info("🔍 检查是否存在 Cloudflare 验证...")
+        
+        try:
+            # 【验证步骤1】查找Cloudflare验证框架
+            turnstile_frame = page.frame_locator('iframe[src*="challenges.cloudflare.com"]')
+            checkbox = turnstile_frame.locator('input[type="checkbox"]')
+            
+            # 【验证步骤2】等待验证框出现并点击
+            checkbox.wait_for(state="visible", timeout=30000)
+            checkbox.click()
+            logger.info("✅ 已点击Cloudflare验证复选框")
+            
+            # 【验证步骤3】等待验证完成
+            page.wait_for_function(
+                "() => document.querySelector('[name=\"cf-turnstile-response\"]') && document.querySelector('[name=\"cf-turnstile-response\"]').value",
+                timeout=60000
+            )
+            logger.info("✅ Cloudflare 验证通过完成")
+            
+        except Exception as e:
+            logger.warning(f"⚠️  Cloudflare 验证处理失败，继续尝试登录: {str(e)}")
+    
+    def _is_login_required(self, page: Page) -> bool:
+        """【辅助工具3】检查登录状态"""
+        is_login_page = "/auth/login" in page.url
+        if is_login_page:
+            logger.info("📍 当前在登录页面，需要执行登录")
+        else:
+            logger.info("📍 已登录状态，无需重复登录")
+        return is_login_page
+    
+    def _take_screenshot(self, page: Page, status: str):
+        """【辅助工具4】智能截图保存"""
+        try:
+            # 等待页面完全渲染
+            time.sleep(3)
+            
+            # 生成带时间戳的文件名
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            filename = f"{status}_{self.server_name}_{timestamp}.png"
+            
+            # 保存全页面截图
+            page.screenshot(path=filename)
+            logger.info(f"📸 截图已保存: {filename}")
+            
+        except Exception as e:
+            logger.error(f"❌ 截图保存失败: {str(e)}")
+
+
+# =====================================================================
+#                          主程序入口
+# =====================================================================
+
 def main():
-    """主函数"""
+    """【步骤3】主程序执行流程"""
     try:
-        logger.info("开始执行自动登录脚本...")
+        logger.info("🚀 开始执行 HidenCloud 自动登录脚本...")
         
-        # 创建登录实例
+        # 【主程序步骤1】创建登录客户端实例
+        logger.info("📋 正在初始化登录客户端...")
         login_client = HidenCloudLogin()
+        logger.info("✅ 登录客户端初始化完成")
         
-        # 使用 Cookie 登录（GitHub Actions 环境中使用无头模式）
+        # 【主程序步骤2】确定浏览器运行模式
         is_github_actions = os.getenv('GITHUB_ACTIONS') == 'true'
         headless = is_github_actions or os.getenv('HEADLESS', 'true').lower() == 'true'
+        
+        if headless:
+            logger.info("👻 使用无头模式运行（适合CI/CD环境）")
+        else:
+            logger.info("🖥️  使用有界面模式运行（适合本地调试）")
+        
+        # 【主程序步骤3】执行智能登录流程
+        logger.info("🔐 开始执行智能登录流程...")
         success = login_client.login(headless=headless)
         
+        # 【主程序步骤4】处理执行结果
         if success:
-            logger.info("自动登录脚本执行成功！")
+            logger.info("🎉 自动登录脚本执行成功！")
+            logger.info("📊 任务完成，系统即将正常退出")
             sys.exit(0)
         else:
-            logger.error("自动登录脚本执行失败！")
+            logger.error("❌ 自动登录脚本执行失败！")
+            logger.error("🔧 请检查配置信息和网络连接")
             sys.exit(1)
             
     except Exception as e:
-        logger.error(f"脚本执行过程中发生错误: {str(e)}")
+        logger.error(f"💥 脚本执行过程中发生严重错误: {str(e)}")
+        logger.error("🔧 请检查环境配置和依赖安装")
         sys.exit(1)
 
+
+# =====================================================================
+#                          程序启动点
+# =====================================================================
 
 if __name__ == "__main__":
     main()
