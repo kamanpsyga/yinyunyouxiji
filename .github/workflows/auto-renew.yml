@@ -43,5 +43,5 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: screenshots-${{ github.run_id }}
-        path: img/*.png
+        path: "*.png"
         retention-days: 30
