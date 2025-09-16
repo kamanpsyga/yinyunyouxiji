@@ -91,6 +91,27 @@ class HidenCloudLogin:
         except Exception as e:
             logger.error(f"截图保存失败: {str(e)}")
     
+    def _take_debug_screenshot(self, page: Page, server_name: str):
+        """截图保存失败状态用于调试"""
+        try:
+            # 确保 img 文件夹存在
+            os.makedirs('img', exist_ok=True)
+            
+            # 生成调试截图文件名
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            filename = f"img/debug_failed_{server_name}_{timestamp}.png"
+            
+            # 截图当前状态
+            page.screenshot(path=filename)
+            logger.info(f"🔍 调试截图已保存: {filename}")
+            
+            # 同时记录当前URL用于调试
+            current_url = page.url
+            logger.info(f"🔍 当前页面URL: {current_url}")
+            
+        except Exception as e:
+            logger.error(f"调试截图保存失败: {str(e)}")
+    
     def login(self, headless: bool = True) -> bool:
         """使用 Cookie 自动登录"""
         try:
@@ -125,11 +146,18 @@ class HidenCloudLogin:
                     server_name = first_server.get('name', f"服务器{first_server['id']}")
                     
                     logger.info(f"正在访问服务器: {server_name} ({server_url})")
-                    page.goto(server_url, wait_until='networkidle')
+                    
+                    # 增加超时时间，因为可能有 CF 验证
+                    try:
+                        page.goto(server_url, wait_until='networkidle', timeout=60000)  # 60秒超时
+                        logger.info("页面加载完成")
+                    except Exception as e:
+                        logger.warning(f"页面加载超时，尝试继续: {str(e)}")
+                        # 即使超时也尝试继续，可能页面已经部分加载
                     
                     # 等待 CF 验证完成
                     logger.info("等待 Cloudflare 安全验证...")
-                    time.sleep(10)
+                    time.sleep(15)  # 给更多时间让 CF 验证完成
                     
                     # 验证是否成功访问
                     if self._verify_access(page, server_url):
@@ -141,6 +169,8 @@ class HidenCloudLogin:
                         return True
                     else:
                         logger.error(f"登录失败：无法访问 {server_name}")
+                        # 截图失败状态用于调试
+                        self._take_debug_screenshot(page, server_name)
                         return False
                 else:
                     logger.error("Cookie 设置失败")
