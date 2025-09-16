@@ -103,6 +103,75 @@ class HidenCloudLogin:
             except Exception as fallback_e:
                 logger.error(f"备用截图也失败: {str(fallback_e)}")
     
+    def _handle_cloudflare_verification(self, page: Page):
+        """处理 Cloudflare 人机验证"""
+        try:
+            logger.info("正在检查 Cloudflare 验证...")
+            
+            # 等待页面稳定
+            time.sleep(3)
+            
+            # 查找 Cloudflare 验证复选框
+            checkbox_selectors = [
+                'label.cb-lb input[type="checkbox"]',  # 根据实际结构：label.cb-lb 内的 checkbox
+                'label:has-text("Verify you are human") input[type="checkbox"]'  # 英文版本
+            ]
+            
+            checkbox_found = False
+            
+            # 也尝试直接点击 label 标签
+            label_selectors = [
+                'label.cb-lb',                                    # 直接点击 label
+                'label:has-text("Verify you are human")'          # 英文版本
+            ]
+            
+            # 先尝试点击复选框
+            for selector in checkbox_selectors:
+                try:
+                    checkbox = page.locator(selector).first
+                    if checkbox.is_visible(timeout=2000):
+                        logger.info(f"找到 Cloudflare 验证复选框: {selector}")
+                        checkbox.click()
+                        logger.info("✅ 已点击 Cloudflare 验证复选框")
+                        checkbox_found = True
+                        break
+                except Exception as e:
+                    logger.debug(f"选择器 {selector} 未找到复选框: {str(e)}")
+                    continue
+            
+            # 如果复选框点击失败，尝试点击 label
+            if not checkbox_found:
+                for selector in label_selectors:
+                    try:
+                        label = page.locator(selector).first
+                        if label.is_visible(timeout=2000):
+                            logger.info(f"找到 Cloudflare 验证标签: {selector}")
+                            label.click()
+                            logger.info("✅ 已点击 Cloudflare 验证标签")
+                            checkbox_found = True
+                            break
+                    except Exception as e:
+                        logger.debug(f"选择器 {selector} 未找到标签: {str(e)}")
+                        continue
+            
+            if checkbox_found:
+                # 等待验证完成
+                logger.info("等待 Cloudflare 验证完成...")
+                time.sleep(10)  # 增加等待时间
+            
+            if not checkbox_found:
+                logger.info("未找到 Cloudflare 验证复选框，可能已经通过验证")
+            
+            # 检查是否还在验证页面
+            current_url = page.url
+            if "dash.hidencloud.com" in current_url and "/service/" in current_url:
+                logger.info("✅ 已通过 Cloudflare 验证，进入目标页面")
+            else:
+                logger.warning(f"可能仍在验证中，当前URL: {current_url}")
+                
+        except Exception as e:
+            logger.warning(f"处理 Cloudflare 验证时出错: {str(e)}")
+    
     def _take_debug_screenshot(self, page: Page, server_name: str):
         """截图保存失败状态用于调试"""
         try:
@@ -167,9 +236,10 @@ class HidenCloudLogin:
                         logger.warning(f"页面加载超时，尝试继续: {str(e)}")
                         # 即使超时也尝试继续，可能页面已经部分加载
                     
-                    # 等待 CF 验证完成
-                    logger.info("等待 Cloudflare 安全验证...")
-                    time.sleep(15)  # 给更多时间让 CF 验证完成
+                    # 处理 CF 验证
+                    logger.info("检查并处理 Cloudflare 安全验证...")
+                    self._handle_cloudflare_verification(page)
+                    time.sleep(10)  # 等待验证完成
                     
                     # 验证是否成功访问
                     if self._verify_access(page, server_url):
