@@ -36,10 +36,24 @@ class HidenCloudLogin:
         # 加载服务器配置
         self.servers = self._load_server_config()
         
-        # 从环境变量获取 Cookie 值
+        # 检查环境变量（Cookie 优先，账号密码作为备选）
         self.cookie_value = os.getenv('REMEMBER_WEB_COOKIE')
-        if not self.cookie_value:
-            raise ValueError("请设置环境变量 REMEMBER_WEB_COOKIE")
+        account_info = os.getenv('HIDENCLOUD_ACCOUNT')
+        
+        # 解析账号信息
+        if account_info:
+            try:
+                self.email, self.password = account_info.split(':')
+            except ValueError:
+                logger.error("HIDENCLOUD_ACCOUNT 格式错误，应为 'email:password'")
+                self.email = None
+                self.password = None
+        else:
+            self.email = None
+            self.password = None
+        
+        if not self.cookie_value and not (self.email and self.password):
+            raise ValueError("必须提供 REMEMBER_WEB_COOKIE 或 HIDENCLOUD_ACCOUNT（格式：email:password）")
         
         if not self.servers:
             raise ValueError("请设置环境变量 HIDENCLOUD_SERVERS")
@@ -102,6 +116,68 @@ class HidenCloudLogin:
                 logger.info(f"📸 备用截图已保存: {filename}")
             except Exception as fallback_e:
                 logger.error(f"备用截图也失败: {str(fallback_e)}")
+    
+    def _login_with_password(self, page: Page, server_url: str, server_name: str) -> bool:
+        """使用邮箱密码登录"""
+        try:
+            logger.info("正在尝试使用邮箱和密码登录...")
+            
+            # 访问登录页面
+            page.goto(self.login_url, wait_until="networkidle", timeout=60000)
+            logger.info("登录页面已加载")
+            
+            # 填写邮箱和密码
+            page.fill('input[name="email"]', self.email)
+            page.fill('input[name="password"]', self.password)
+            logger.info("邮箱和密码已填写")
+            
+            # 处理 Cloudflare Turnstile 人机验证
+            logger.info("正在处理 Cloudflare Turnstile 人机验证...")
+            try:
+                # 查找 iframe 中的验证复选框
+                turnstile_frame = page.frame_locator('iframe[src*="challenges.cloudflare.com"]')
+                checkbox = turnstile_frame.locator('input[type="checkbox"]')
+                
+                checkbox.wait_for(state="visible", timeout=30000)
+                checkbox.click()
+                logger.info("已点击人机验证复选框，等待验证结果...")
+                
+                # 等待验证完成
+                page.wait_for_function(
+                    "() => document.querySelector('[name=\"cf-turnstile-response\"]') && document.querySelector('[name=\"cf-turnstile-response\"]').value",
+                    timeout=60000
+                )
+                logger.info("✅ 人机验证成功！")
+                
+            except Exception as e:
+                logger.warning(f"Cloudflare 验证处理失败: {str(e)}")
+                # 继续尝试登录，有时验证会自动通过
+            
+            # 点击登录按钮
+            page.click('button[type="submit"]:has-text("Sign in to your account")')
+            logger.info("已点击登录按钮，等待页面跳转...")
+            
+            # 等待跳转到仪表板
+            page.wait_for_url(f"{self.base_url}/dashboard", timeout=60000)
+            
+            # 检查是否登录成功
+            if "/auth/login" in page.url:
+                logger.error("❌ 账号密码登录失败，请检查凭据是否正确")
+                return False
+            
+            logger.info("✅ 账号密码登录成功！")
+            
+            # 登录成功后访问目标服务器页面
+            logger.info(f"正在访问目标服务器: {server_name} ({server_url})")
+            page.goto(server_url, wait_until="networkidle", timeout=60000)
+            
+            # 截图保存
+            self._take_screenshot(page, server_name)
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ 账号密码登录过程中发生错误: {str(e)}")
+            return False
     
     def _handle_cloudflare_verification(self, page: Page):
         """处理 Cloudflare 人机验证"""
@@ -257,43 +333,76 @@ class HidenCloudLogin:
                 # 创建页面
                 page = context.new_page()
                 
-                # 设置 Cookie
-                logger.info("正在设置 Cookie...")
-                success = self._set_cookies(page)
-                
-                if success:
-                    # 访问第一个服务器进行验证
-                    first_server = self.servers[0]
-                    server_url = first_server['url']
-                    server_name = first_server.get('name', f"服务器{first_server['id']}")
+                # 优先尝试 Cookie 登录
+                if self.cookie_value:
+                    logger.info("检测到 REMEMBER_WEB_COOKIE，尝试使用 Cookie 登录")
+                    success = self._set_cookies(page)
                     
-                    logger.info(f"正在使用 Cookie 访问服务器: {server_name} ({server_url})")
-                    
-                    try:
-                        page.goto(server_url, wait_until='networkidle', timeout=60000)
-                        logger.info("页面加载完成")
+                    if success:
+                        # 访问第一个服务器进行验证
+                        first_server = self.servers[0]
+                        server_url = first_server['url']
+                        server_name = first_server.get('name', f"服务器{first_server['id']}")
                         
-                        # 检查是否被重定向到登录页面
-                        current_url = page.url
-                        logger.info(f"当前页面URL: {current_url}")
+                        logger.info(f"正在使用 Cookie 访问服务器: {server_name} ({server_url})")
                         
-                        if "/auth/login" in current_url:
-                            logger.error("❌ Cookie 登录失败或会话已过期，页面被重定向到登录页面")
-                            page.context.clear_cookies()
-                            return False
+                        try:
+                            page.goto(server_url, wait_until='networkidle', timeout=60000)
+                            logger.info("页面加载完成")
+                            
+                            # 检查是否被重定向到登录页面
+                            current_url = page.url
+                            logger.info(f"当前页面URL: {current_url}")
+                            
+                            if "/auth/login" in current_url:
+                                logger.warning("❌ Cookie 登录失败或会话已过期，将回退到账号密码登录")
+                                page.context.clear_cookies()
+                                # 回退到账号密码登录
+                                if self.email and self.password:
+                                    return self._login_with_password(page, server_url, server_name)
+                                else:
+                                    logger.error("Cookie 无效且未提供 HIDENCLOUD_ACCOUNT，无法继续登录")
+                                    return False
+                            else:
+                                logger.info("✅ Cookie 登录成功！")
+                                
+                                # 截图保存
+                                self._take_screenshot(page, server_name)
+                                return True
+                                
+                        except Exception as e:
+                            logger.warning(f"Cookie 访问页面时发生错误: {str(e)}")
+                            # 回退到账号密码登录
+                            if self.email and self.password:
+                                logger.info("回退到账号密码登录")
+                                first_server = self.servers[0]
+                                server_url = first_server['url']
+                                server_name = first_server.get('name', f"服务器{first_server['id']}")
+                                return self._login_with_password(page, server_url, server_name)
+                            else:
+                                logger.error("Cookie 访问失败且未提供 HIDENCLOUD_ACCOUNT")
+                                return False
+                    else:
+                        logger.error("Cookie 设置失败")
+                        if self.email and self.password:
+                            logger.info("回退到账号密码登录")
+                            first_server = self.servers[0]
+                            server_url = first_server['url']
+                            server_name = first_server.get('name', f"服务器{first_server['id']}")
+                            return self._login_with_password(page, server_url, server_name)
                         else:
-                            logger.info("✅ Cookie 登录成功！")
-                            
-                            # 截图保存
-                            self._take_screenshot(page, server_name)
-                            return True
-                            
-                    except Exception as e:
-                        logger.error(f"访问页面时发生错误: {str(e)}")
-                        return False
+                            return False
                 else:
-                    logger.error("Cookie 设置失败")
-                    return False
+                    # 没有 Cookie，直接使用账号密码登录
+                    logger.info("未提供 REMEMBER_WEB_COOKIE，使用账号密码登录")
+                    if self.email and self.password:
+                        first_server = self.servers[0]
+                        server_url = first_server['url']
+                        server_name = first_server.get('name', f"服务器{first_server['id']}")
+                        return self._login_with_password(page, server_url, server_name)
+                    else:
+                        logger.error("未提供 Cookie 和 HIDENCLOUD_ACCOUNT，无法登录")
+                        return False
                     
         except Exception as e:
             logger.error(f"登录过程中发生错误: {str(e)}")
