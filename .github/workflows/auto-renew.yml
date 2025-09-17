@@ -49,7 +49,7 @@ jobs:
       with:
         name: screenshots-${{ github.run_id }}
         path: "*.png"
-        retention-days: 30
+        retention-days: 3
     
     - name: Commit and push README.md
       if: always()
@@ -122,4 +122,4 @@ jobs:
         GITHUB_TOKEN: ${{ github.token }}
       with:
         repository: ${{ github.repository }}
-        older-than-seconds: 3600  # 删除1小时前的记录
+        older-than-seconds: 172800  # 删除2天前的记录
