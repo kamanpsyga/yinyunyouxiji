@@ -40,6 +40,15 @@ class HidenCloudLogin:
         
         # 【步骤1.3】验证配置完整性
         self._validate_config()
+        
+        # 【步骤1.4】初始化运行结果收集
+        self.run_results = {
+            'server_id': self.server_name,
+            'renewal_status': 'Unknown',
+            'old_due_date': None,
+            'new_due_date': None,
+            'start_time': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
     
     # =================================================================
     #                       配置加载方法组
@@ -343,7 +352,7 @@ class HidenCloudLogin:
             logger.info("🔄 开始执行服务续费操作...")
             
             # 【续费步骤0】记录续费前的到期时间
-            self._record_due_date_before_renewal(page)
+            self._record_due_date(page, "续费前")
             
             # 【续费步骤1】查找并点击Renew按钮
             renew_button = page.locator('button:has-text("Renew")')
@@ -374,10 +383,13 @@ class HidenCloudLogin:
             
             # 检查是否是续费限制弹窗
             if self._check_renewal_restriction(page):
+                logger.info("📋 检测到续费限制弹窗，执行结果: 未到续期时间")
+                self.run_results['renewal_status'] = 'Unexpired'
                 return
             
             # 检查是否是续费确认弹窗
             if self._check_renewal_confirmation(page):
+                logger.info("📋 检测到续费确认弹窗，开始执行续费流程")
                 return
                 
             # 如果都没有检测到，说明可能有其他情况
@@ -398,8 +410,9 @@ class HidenCloudLogin:
             restriction_message = page.locator('text="You can only renew your free service when there is less than 1 day left before it expires."')
             
             if restriction_title.is_visible() and restriction_message.is_visible():
-                logger.warning("⚠️  检测到续费限制弹窗")
-                logger.info("📋 执行结果: 未到续期时间")
+                logger.info("🔍 检测到弹窗标题: 'Renewal Restricted'")
+                logger.info("🔍 检测到限制说明: 'You can only renew your free service when there is less than 1 day left before it expires.'")
+                logger.info("📋 确认为续费限制弹窗")
                 self._take_screenshot(page, "renewal_restricted")
                 return True
                 
@@ -418,7 +431,9 @@ class HidenCloudLogin:
             confirmation_message = page.locator('text*="Below you can renew your service for another Week. After hitting "Renew", we will generate an invoice for you to pay."')
             
             if confirmation_title.is_visible() and confirmation_message.is_visible():
-                logger.info("✅ 检测到Renew Plan确认弹窗")
+                logger.info("🔍 检测到弹窗标题: 'Renew Plan'")
+                logger.info('🔍 检测到续费说明: "Below you can renew your service for another Week. After hitting "Renew", we will generate an invoice for you to pay."')
+                logger.info("📋 确认为续费确认弹窗")
                 
                 # 查找并点击Create Invoice按钮
                 create_invoice_button = page.locator('button:has-text("Create Invoice")')
@@ -428,8 +443,35 @@ class HidenCloudLogin:
                     create_invoice_button.click()
                     logger.info("✅ Invoice创建请求已提交")
                     
-                    # 等待跳转到Invoice页面并处理支付
-                    self._handle_payment(page)
+                    # 等待Invoice页面加载并验证
+                    logger.info("💳 等待Invoice页面加载...")
+                    time.sleep(10)
+                    
+                    # 检测Invoice页面的关键元素
+                    success_message = page.locator('text*="Success! Invoice has been generated successfully"')
+                    pay_button = page.locator('button:has-text("Pay")')
+                    
+                    if success_message.is_visible() and pay_button.is_visible():
+                        logger.info("🔍 检测到成功提示: 'Success! Invoice has been generated successfully.'")
+                        logger.info("🔍 检测到Pay按钮")
+                        logger.info("📋 确认为Invoice页面，开始支付流程")
+                        
+                        # 点击Pay按钮
+                        logger.info("🎯 点击Pay按钮...")
+                        pay_button.click()
+                        logger.info("✅ 支付请求已提交")
+                        
+                        # 等待支付处理和页面刷新
+                        logger.info("⏳ 等待支付处理...")
+                        time.sleep(5)
+                        
+                        # 检查支付结果
+                        self._check_payment_result(page)
+                        
+                    else:
+                        logger.warning("⚠️  无法确认Invoice页面")
+                        self._take_screenshot(page, "invoice_page_error")
+                    
                     return True
                     
                 else:
@@ -441,35 +483,6 @@ class HidenCloudLogin:
             logger.warning(f"⚠️  检查续费确认时出错: {str(e)}")
             
         return False
-    
-    def _handle_payment(self, page: Page):
-        """【支付处理】处理Invoice支付"""
-        try:
-            logger.info("💳 等待Invoice页面加载...")
-            
-            # 等待成功提示出现
-            success_message = page.locator('text*="Success! Invoice has been generated successfully"')
-            success_message.wait_for(state="visible", timeout=15000)
-            logger.info("✅ Invoice生成成功提示已显示")
-            
-            # 查找并点击Pay按钮
-            pay_button = page.locator('button:has-text("Pay")')
-            
-            if pay_button.is_visible():
-                logger.info("🎯 找到Pay按钮，点击支付...")
-                pay_button.click()
-                logger.info("✅ 支付请求已提交")
-                
-                # 等待跳转回Dashboard并检查支付结果
-                self._check_payment_result(page)
-                
-            else:
-                logger.warning("⚠️  未找到Pay按钮")
-                self._take_screenshot(page, "payment_button_error")
-                
-        except Exception as e:
-            logger.warning(f"⚠️  处理支付失败: {str(e)}")
-            self._take_screenshot(page, "payment_failed")
     
     def _check_payment_result(self, page: Page):
         """【支付结果】检查支付完成状态"""
@@ -487,6 +500,9 @@ class HidenCloudLogin:
             logger.info("🎉 支付成功！续费操作已完成")
             logger.info("✅ 显示成功提示: 'Success! Your payment has been completed!'")
             
+            # 更新运行结果
+            self.run_results['renewal_status'] = 'Success'
+            
             # 保存Dashboard页面的成功截图
             self._take_screenshot(page, "renewal_payment_success")
             
@@ -496,7 +512,7 @@ class HidenCloudLogin:
             logger.info("✅ 已跳转回服务管理页面")
             
             # 记录续费后的新到期时间
-            self._record_due_date_after_renewal(page)
+            self._record_due_date(page, "续费后")
             
         except Exception as e:
             logger.warning(f"⚠️  支付结果检查失败: {str(e)}")
@@ -507,120 +523,120 @@ class HidenCloudLogin:
     #                        到期时间记录方法组
     # =================================================================
     
-    def _record_due_date_before_renewal(self, page: Page):
-        """【时间记录1】记录续费前的到期时间"""
+    def _convert_date_format(self, date_str: str) -> str:
+        """【日期转换】将网页日期格式转换为标准格式"""
         try:
-            logger.info("📅 正在记录续费前的到期时间...")
+            # 月份映射表
+            month_map = {
+                'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
+                'May': '05', 'Jun': '06', 'Jul': '07', 'Aug': '08',
+                'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+            }
             
-            # 方法1：通过Due date标签定位
-            logger.info("🔍 [调试] 尝试方法1：通过Due date标签定位")
+            # 解析日期格式：24 Sep 2025
+            parts = date_str.strip().split()
+            if len(parts) == 3:
+                day = parts[0].zfill(2)  # 补零到两位数
+                month = month_map.get(parts[1], '00')
+                year = parts[2]
+                
+                # 返回标准格式：2025-09-24
+                converted_date = f"{year}-{month}-{day}"
+                logger.info(f"📅 日期格式转换: {date_str} -> {converted_date}")
+                return converted_date
+            else:
+                logger.warning(f"⚠️  日期格式不符合预期: {date_str}")
+                return date_str
+                
+        except Exception as e:
+            logger.warning(f"⚠️  日期格式转换失败: {str(e)}")
+            return date_str
+    
+    def _record_due_date(self, page: Page, stage: str):
+        """【时间记录】记录到期时间的通用方法"""
+        try:
+            logger.info(f"📅 正在记录{stage}的到期时间...")
+            
+            # 如果是续费后，等待页面加载完成
+            if stage == "续费后":
+                time.sleep(2)
+            
+            # 通过Due date标签定位日期
             try:
                 due_date_label = page.locator('text="Due date"')
-                logger.info(f"🔍 [调试] Due date标签是否可见: {due_date_label.is_visible()}")
-                
                 if due_date_label.is_visible():
                     # 查找Due date后面的日期文本（格式：DD MMM YYYY）
                     parent_container = due_date_label.locator('..')
-                    logger.info("🔍 [调试] 已找到Due date父容器")
-                    
-                    # 使用正则匹配日期格式
                     date_text = parent_container.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/').first
-                    logger.info(f"🔍 [调试] 日期文本是否可见: {date_text.is_visible()}")
-                    
                     if date_text.is_visible():
-                        due_date = date_text.text_content().strip()
-                        logger.info(f"✅ [调试] 方法1成功获取到期时间: {due_date}")
-                        return due_date
-                    else:
-                        logger.warning("⚠️ [调试] 方法1：在父容器中未找到日期格式文本")
-                else:
-                    logger.warning("⚠️ [调试] 方法1：未找到Due date标签")
+                        due_date_raw = date_text.text_content().strip()
+                        logger.info(f"📋 {stage}原始时间: {due_date_raw}")
+                        
+                        # 转换日期格式
+                        due_date_formatted = self._convert_date_format(due_date_raw)
+                        
+                        # 更新运行结果
+                        if stage == "续费前":
+                            self.run_results['old_due_date'] = due_date_formatted
+                        elif stage == "续费后":
+                            self.run_results['new_due_date'] = due_date_formatted
+                            
+                        return due_date_formatted
             except Exception as e:
-                logger.warning(f"⚠️ [调试] 方法1异常: {str(e)}")
-            
-            # 方法2：直接查找日期格式文本
-            logger.info("🔍 [调试] 尝试方法2：直接查找日期格式文本")
-            try:
-                # 查找符合日期格式的文本（DD MMM YYYY）
-                date_elements = page.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/')
-                element_count = date_elements.count()
-                logger.info(f"🔍 [调试] 找到的日期格式元素数量: {element_count}")
+                logger.warning(f"⚠️  获取{stage}到期时间失败: {str(e)}")
                 
-                if element_count > 0:
-                    due_date = date_elements.first.text_content().strip()
-                    logger.info(f"✅ [调试] 方法2成功获取到期时间: {due_date}")
-                    return due_date
-                else:
-                    logger.warning("⚠️ [调试] 方法2：未找到任何日期格式文本")
-            except Exception as e:
-                logger.warning(f"⚠️ [调试] 方法2异常: {str(e)}")
-                
-            logger.warning("⚠️  无法找到续费前的到期时间")
+            logger.warning(f"⚠️  无法找到{stage}的到期时间")
             return None
                 
         except Exception as e:
-            logger.warning(f"⚠️  记录续费前到期时间失败: {str(e)}")
+            logger.warning(f"⚠️  记录{stage}到期时间失败: {str(e)}")
             return None
     
-    def _record_due_date_after_renewal(self, page: Page):
-        """【时间记录2】记录续费后的新到期时间"""
+    # =================================================================
+    #                        README报告生成方法组
+    # =================================================================
+    
+    def generate_readme(self):
+        """【报告生成】生成README.md文件"""
         try:
-            logger.info("📅 正在记录续费后的到期时间...")
+            logger.info("📝 正在生成README.md文件...")
             
-            # 等待页面加载完成
-            time.sleep(2)
+            # 获取当前时间
+            current_time = time.strftime('%Y-%m-%d %H:%M:%S')
             
-            # 使用与续费前相同的方法查找到期时间
-            # 方法1：通过Due date标签定位
-            logger.info("🔍 [调试] 续费后-尝试方法1：通过Due date标签定位")
-            try:
-                due_date_label = page.locator('text="Due date"')
-                logger.info(f"🔍 [调试] 续费后-Due date标签是否可见: {due_date_label.is_visible()}")
-                
-                if due_date_label.is_visible():
-                    # 查找Due date后面的日期文本（格式：DD MMM YYYY）
-                    parent_container = due_date_label.locator('..')
-                    logger.info("🔍 [调试] 续费后-已找到Due date父容器")
-                    
-                    # 使用正则匹配日期格式
-                    date_text = parent_container.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/').first
-                    logger.info(f"🔍 [调试] 续费后-日期文本是否可见: {date_text.is_visible()}")
-                    
-                    if date_text.is_visible():
-                        due_date = date_text.text_content().strip()
-                        logger.info(f"✅ [调试] 续费后-方法1成功获取到期时间: {due_date}")
-                        return due_date
-                    else:
-                        logger.warning("⚠️ [调试] 续费后-方法1：在父容器中未找到日期格式文本")
-                else:
-                    logger.warning("⚠️ [调试] 续费后-方法1：未找到Due date标签")
-            except Exception as e:
-                logger.warning(f"⚠️ [调试] 续费后-方法1异常: {str(e)}")
+            # 根据续费状态设置图标和状态文本
+            if self.run_results['renewal_status'] == 'Success':
+                status_icon = '✅'
+                status_text = 'Success'
+            elif self.run_results['renewal_status'] == 'Unexpired':
+                status_icon = 'ℹ️'
+                status_text = 'Unexpired'
+            else:
+                status_icon = '❌'
+                status_text = 'Failed'
             
-            # 方法2：直接查找日期格式文本
-            logger.info("🔍 [调试] 续费后-尝试方法2：直接查找日期格式文本")
-            try:
-                # 查找符合日期格式的文本（DD MMM YYYY）
-                date_elements = page.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/')
-                element_count = date_elements.count()
-                logger.info(f"🔍 [调试] 续费后-找到的日期格式元素数量: {element_count}")
-                
-                if element_count > 0:
-                    # 通常最新的日期会是续费后的日期
-                    due_date = date_elements.first.text_content().strip()
-                    logger.info(f"✅ [调试] 续费后-方法2成功获取到期时间: {due_date}")
-                    return due_date
-                else:
-                    logger.warning("⚠️ [调试] 续费后-方法2：未找到任何日期格式文本")
-            except Exception as e:
-                logger.warning(f"⚠️ [调试] 续费后-方法2异常: {str(e)}")
-                
-            logger.warning("⚠️  无法找到续费后的到期时间")
-            return None
-                
+            # 构建README内容
+            readme_content = f"""**最后运行时间**: `{current_time}`
+
+**运行结果**: <br>
+🖥️服务器ID：`{self.run_results['server_id']}`<br>
+📊续期结果：{status_icon}{status_text}<br>
+🕛️旧到期时间: `{self.run_results['old_due_date'] or 'N/A'}`<br>"""
+            
+            # 如果续费成功，添加新到期时间
+            if self.run_results['renewal_status'] == 'Success' and self.run_results['new_due_date']:
+                readme_content += f"🕡️新到期时间：`{self.run_results['new_due_date']}`<br>\n"
+            
+            readme_content += "\n"
+            
+            # 写入README.md文件
+            with open('README.md', 'w', encoding='utf-8') as f:
+                f.write(readme_content)
+            
+            logger.info("✅ README.md文件生成成功")
+            
         except Exception as e:
-            logger.warning(f"⚠️  记录续费后到期时间失败: {str(e)}")
-            return None
+            logger.warning(f"⚠️  生成README.md失败: {str(e)}")
 
 
 # =====================================================================
@@ -650,7 +666,11 @@ def main():
         logger.info("🔐 开始执行智能登录流程...")
         success = login_client.login(headless=headless)
         
-        # 【主程序步骤4】处理执行结果
+        # 【主程序步骤4】生成README.md报告
+        logger.info("📝 开始生成运行报告...")
+        login_client.generate_readme()
+        
+        # 【主程序步骤5】处理执行结果
         if success:
             logger.info("🎉 自动登录脚本执行成功！")
             logger.info("📊 任务完成，系统即将正常退出")
