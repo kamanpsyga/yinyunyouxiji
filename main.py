@@ -188,6 +188,9 @@ class HidenCloudLogin:
             # 【Cookie登录步骤4】登录成功处理
             logger.info("✅ Cookie 登录成功！")
             self._take_screenshot(page, "cookie_success")
+            
+            # 执行续费操作
+            self._perform_renewal(page)
             return True
             
         except Exception as e:
@@ -242,6 +245,9 @@ class HidenCloudLogin:
             logger.info(f"🌐 正在访问目标服务器: {self.server_url}")
             page.goto(self.server_url, wait_until="networkidle", timeout=60000)
             self._take_screenshot(page, "password_success")
+            
+            # 执行续费操作
+            self._perform_renewal(page)
             return True
             
         except Exception as e:
@@ -259,13 +265,13 @@ class HidenCloudLogin:
             # 构建标准的Cookie对象
             cookie = {
                 "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",  # HidenCloud记住登录的Cookie名称
-                "value": self.cookie_value,                                      # Cookie值
-                "domain": "dash.hidencloud.com",                                # 作用域
-                "path": "/",                                                    # 路径
-                "expires": int(time.time()) + 3600 * 24 * 365,                 # 有效期：1年
-                "httpOnly": True,                                               # 仅HTTP访问
-                "secure": True,                                                 # 仅HTTPS传输
-                "sameSite": "Lax"                                              # 跨站策略
+                "value": self.cookie_value,                                       # Cookie值
+                "domain": "dash.hidencloud.com",                                  # 作用域
+                "path": "/",                                                      # 路径
+                "expires": int(time.time()) + 3600 * 24 * 365,                    # 有效期：1年
+                "httpOnly": True,                                                 # 仅HTTP访问
+                "secure": True,                                                   # 仅HTTPS传输
+                "sameSite": "Lax"                                                 # 跨站策略
             }
             
             # 将Cookie添加到浏览器上下文
@@ -326,6 +332,295 @@ class HidenCloudLogin:
             
         except Exception as e:
             logger.error(f"❌ 截图保存失败: {str(e)}")
+
+    # =================================================================
+    #                        续费功能方法组
+    # =================================================================
+    
+    def _perform_renewal(self, page: Page):
+        """【续费功能】执行服务续费操作"""
+        try:
+            logger.info("🔄 开始执行服务续费操作...")
+            
+            # 【续费步骤0】记录续费前的到期时间
+            self._record_due_date_before_renewal(page)
+            
+            # 【续费步骤1】查找并点击Renew按钮
+            renew_button = page.locator('button:has-text("Renew")')
+            
+            # 等待按钮出现并检查是否可点击
+            renew_button.wait_for(state="visible", timeout=10000)
+            
+            if renew_button.is_enabled():
+                logger.info("🎯 找到Renew按钮，准备点击...")
+                renew_button.click()
+                logger.info("✅ 已点击Renew按钮")
+                
+                # 【续费步骤2】处理续费弹窗（可能是确认弹窗或限制弹窗）
+                self._handle_renewal_dialog(page)
+                
+            else:
+                logger.warning("⚠️  Renew按钮存在但不可点击，可能服务不需要续费")
+                
+        except Exception as e:
+            logger.warning(f"⚠️  续费操作执行失败: {str(e)}")
+            self._take_screenshot(page, "renewal_failed")
+    
+    def _handle_renewal_dialog(self, page: Page):
+        """【续费弹窗】处理续费相关弹窗"""
+        try:
+            logger.info("💬 等待弹窗出现...")
+            time.sleep(2)  # 等待弹窗完全加载
+            
+            # 检查是否是续费限制弹窗
+            if self._check_renewal_restriction(page):
+                return
+            
+            # 检查是否是续费确认弹窗
+            if self._check_renewal_confirmation(page):
+                return
+                
+            # 如果都没有检测到，说明可能有其他情况
+            logger.warning("⚠️  未检测到预期的弹窗")
+            self._take_screenshot(page, "unexpected_dialog")
+                
+        except Exception as e:
+            logger.warning(f"⚠️  处理续费弹窗失败: {str(e)}")
+            self._take_screenshot(page, "renewal_dialog_failed")
+    
+    def _check_renewal_restriction(self, page: Page) -> bool:
+        """【限制检查】检查是否出现续费限制弹窗"""
+        try:
+            # 检查关键元素1：标题
+            restriction_title = page.locator('text="Renewal Restricted"')
+            
+            # 检查关键元素2：限制说明
+            restriction_message = page.locator('text="You can only renew your free service when there is less than 1 day left before it expires."')
+            
+            if restriction_title.is_visible() and restriction_message.is_visible():
+                logger.warning("⚠️  检测到续费限制弹窗")
+                logger.info("📋 执行结果: 未到续期时间")
+                self._take_screenshot(page, "renewal_restricted")
+                return True
+                
+        except Exception as e:
+            logger.warning(f"⚠️  检查续费限制时出错: {str(e)}")
+            
+        return False
+    
+    def _check_renewal_confirmation(self, page: Page) -> bool:
+        """【确认检查】检查是否出现续费确认弹窗"""
+        try:
+            # 检查关键元素1：标题
+            confirmation_title = page.locator('text="Renew Plan"')
+            
+            # 检查关键元素2：续费说明
+            confirmation_message = page.locator('text*="Below you can renew your service for another Week. After hitting "Renew", we will generate an invoice for you to pay."')
+            
+            if confirmation_title.is_visible() and confirmation_message.is_visible():
+                logger.info("✅ 检测到Renew Plan确认弹窗")
+                
+                # 查找并点击Create Invoice按钮
+                create_invoice_button = page.locator('button:has-text("Create Invoice")')
+                
+                if create_invoice_button.is_visible():
+                    logger.info("🎯 找到Create Invoice按钮，点击确认...")
+                    create_invoice_button.click()
+                    logger.info("✅ Invoice创建请求已提交")
+                    
+                    # 等待跳转到Invoice页面并处理支付
+                    self._handle_payment(page)
+                    return True
+                    
+                else:
+                    logger.warning("⚠️  未找到Create Invoice按钮")
+                    self._take_screenshot(page, "renewal_dialog_error")
+                    return True
+                    
+        except Exception as e:
+            logger.warning(f"⚠️  检查续费确认时出错: {str(e)}")
+            
+        return False
+    
+    def _handle_payment(self, page: Page):
+        """【支付处理】处理Invoice支付"""
+        try:
+            logger.info("💳 等待Invoice页面加载...")
+            
+            # 等待成功提示出现
+            success_message = page.locator('text*="Success! Invoice has been generated successfully"')
+            success_message.wait_for(state="visible", timeout=15000)
+            logger.info("✅ Invoice生成成功提示已显示")
+            
+            # 查找并点击Pay按钮
+            pay_button = page.locator('button:has-text("Pay")')
+            
+            if pay_button.is_visible():
+                logger.info("🎯 找到Pay按钮，点击支付...")
+                pay_button.click()
+                logger.info("✅ 支付请求已提交")
+                
+                # 等待跳转回Dashboard并检查支付结果
+                self._check_payment_result(page)
+                
+            else:
+                logger.warning("⚠️  未找到Pay按钮")
+                self._take_screenshot(page, "payment_button_error")
+                
+        except Exception as e:
+            logger.warning(f"⚠️  处理支付失败: {str(e)}")
+            self._take_screenshot(page, "payment_failed")
+    
+    def _check_payment_result(self, page: Page):
+        """【支付结果】检查支付完成状态"""
+        try:
+            logger.info("🔍 等待支付处理完成...")
+            
+            # 等待跳转回Dashboard页面
+            page.wait_for_url("**/dashboard", timeout=15000)
+            logger.info("✅ 已跳转回Dashboard页面")
+            
+            # 检查支付成功提示
+            payment_success = page.locator('text*="Success! Your payment has been completed!"')
+            payment_success.wait_for(state="visible", timeout=10000)
+            
+            logger.info("🎉 支付成功！续费操作已完成")
+            logger.info("✅ 显示成功提示: 'Success! Your payment has been completed!'")
+            
+            # 保存Dashboard页面的成功截图
+            self._take_screenshot(page, "renewal_payment_success")
+            
+            # 跳转回服务管理页面记录新的到期时间
+            logger.info("🔄 跳转回服务管理页面记录新到期时间...")
+            page.goto(self.server_url, wait_until="networkidle", timeout=30000)
+            logger.info("✅ 已跳转回服务管理页面")
+            
+            # 记录续费后的新到期时间
+            self._record_due_date_after_renewal(page)
+            
+        except Exception as e:
+            logger.warning(f"⚠️  支付结果检查失败: {str(e)}")
+            logger.info("📋 支付可能已完成，请手动确认最终状态")
+            self._take_screenshot(page, "payment_result_unknown")
+    
+    # =================================================================
+    #                        到期时间记录方法组
+    # =================================================================
+    
+    def _record_due_date_before_renewal(self, page: Page):
+        """【时间记录1】记录续费前的到期时间"""
+        try:
+            logger.info("📅 正在记录续费前的到期时间...")
+            
+            # 方法1：通过Due date标签定位
+            logger.info("🔍 [调试] 尝试方法1：通过Due date标签定位")
+            try:
+                due_date_label = page.locator('text="Due date"')
+                logger.info(f"🔍 [调试] Due date标签是否可见: {due_date_label.is_visible()}")
+                
+                if due_date_label.is_visible():
+                    # 查找Due date后面的日期文本（格式：DD MMM YYYY）
+                    parent_container = due_date_label.locator('..')
+                    logger.info("🔍 [调试] 已找到Due date父容器")
+                    
+                    # 使用正则匹配日期格式
+                    date_text = parent_container.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/').first
+                    logger.info(f"🔍 [调试] 日期文本是否可见: {date_text.is_visible()}")
+                    
+                    if date_text.is_visible():
+                        due_date = date_text.text_content().strip()
+                        logger.info(f"✅ [调试] 方法1成功获取到期时间: {due_date}")
+                        return due_date
+                    else:
+                        logger.warning("⚠️ [调试] 方法1：在父容器中未找到日期格式文本")
+                else:
+                    logger.warning("⚠️ [调试] 方法1：未找到Due date标签")
+            except Exception as e:
+                logger.warning(f"⚠️ [调试] 方法1异常: {str(e)}")
+            
+            # 方法2：直接查找日期格式文本
+            logger.info("🔍 [调试] 尝试方法2：直接查找日期格式文本")
+            try:
+                # 查找符合日期格式的文本（DD MMM YYYY）
+                date_elements = page.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/')
+                element_count = date_elements.count()
+                logger.info(f"🔍 [调试] 找到的日期格式元素数量: {element_count}")
+                
+                if element_count > 0:
+                    due_date = date_elements.first.text_content().strip()
+                    logger.info(f"✅ [调试] 方法2成功获取到期时间: {due_date}")
+                    return due_date
+                else:
+                    logger.warning("⚠️ [调试] 方法2：未找到任何日期格式文本")
+            except Exception as e:
+                logger.warning(f"⚠️ [调试] 方法2异常: {str(e)}")
+                
+            logger.warning("⚠️  无法找到续费前的到期时间")
+            return None
+                
+        except Exception as e:
+            logger.warning(f"⚠️  记录续费前到期时间失败: {str(e)}")
+            return None
+    
+    def _record_due_date_after_renewal(self, page: Page):
+        """【时间记录2】记录续费后的新到期时间"""
+        try:
+            logger.info("📅 正在记录续费后的到期时间...")
+            
+            # 等待页面加载完成
+            time.sleep(2)
+            
+            # 使用与续费前相同的方法查找到期时间
+            # 方法1：通过Due date标签定位
+            logger.info("🔍 [调试] 续费后-尝试方法1：通过Due date标签定位")
+            try:
+                due_date_label = page.locator('text="Due date"')
+                logger.info(f"🔍 [调试] 续费后-Due date标签是否可见: {due_date_label.is_visible()}")
+                
+                if due_date_label.is_visible():
+                    # 查找Due date后面的日期文本（格式：DD MMM YYYY）
+                    parent_container = due_date_label.locator('..')
+                    logger.info("🔍 [调试] 续费后-已找到Due date父容器")
+                    
+                    # 使用正则匹配日期格式
+                    date_text = parent_container.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/').first
+                    logger.info(f"🔍 [调试] 续费后-日期文本是否可见: {date_text.is_visible()}")
+                    
+                    if date_text.is_visible():
+                        due_date = date_text.text_content().strip()
+                        logger.info(f"✅ [调试] 续费后-方法1成功获取到期时间: {due_date}")
+                        return due_date
+                    else:
+                        logger.warning("⚠️ [调试] 续费后-方法1：在父容器中未找到日期格式文本")
+                else:
+                    logger.warning("⚠️ [调试] 续费后-方法1：未找到Due date标签")
+            except Exception as e:
+                logger.warning(f"⚠️ [调试] 续费后-方法1异常: {str(e)}")
+            
+            # 方法2：直接查找日期格式文本
+            logger.info("🔍 [调试] 续费后-尝试方法2：直接查找日期格式文本")
+            try:
+                # 查找符合日期格式的文本（DD MMM YYYY）
+                date_elements = page.locator('text=/\\d{1,2}\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s+\\d{4}/')
+                element_count = date_elements.count()
+                logger.info(f"🔍 [调试] 续费后-找到的日期格式元素数量: {element_count}")
+                
+                if element_count > 0:
+                    # 通常最新的日期会是续费后的日期
+                    due_date = date_elements.first.text_content().strip()
+                    logger.info(f"✅ [调试] 续费后-方法2成功获取到期时间: {due_date}")
+                    return due_date
+                else:
+                    logger.warning("⚠️ [调试] 续费后-方法2：未找到任何日期格式文本")
+            except Exception as e:
+                logger.warning(f"⚠️ [调试] 续费后-方法2异常: {str(e)}")
+                
+            logger.warning("⚠️  无法找到续费后的到期时间")
+            return None
+                
+        except Exception as e:
+            logger.warning(f"⚠️  记录续费后到期时间失败: {str(e)}")
+            return None
 
 
 # =====================================================================
