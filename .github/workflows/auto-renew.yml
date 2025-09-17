@@ -1,4 +1,4 @@
-name: Auto Login to HidenCloud
+name: HidenCloud自动续期
 
 on:
   # 定时运行 - 每天上午9点（UTC时间1点）
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  auto-login:
+  auto-renewal:
     runs-on: ubuntu-latest
     
     # 授予工作流写入仓库内容和管理Actions的权限
