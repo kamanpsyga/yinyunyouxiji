@@ -363,18 +363,18 @@ class HidenCloudLogin:
             # 检测弹窗标题
             restriction_title = page.locator('text="Renewal Restricted"')
             
-            # 使用包含文字的方式检测限制说明（不依赖具体天数）
-            restriction_message = page.locator(':has-text("You can only renew your free service when there is less than 1 day left before it expires")')
+            # 使用更精确的选择器检测限制说明（只选择p标签中的文字）
+            restriction_message = page.locator('p:has-text("You can only renew your free service when there is less than 1 day left before it expires")')
             
             if restriction_title.is_visible() and restriction_message.is_visible():
                 # 获取完整的限制说明文字用于日志记录
+                logger.info("🔍 检测到弹窗标题: 'Renewal Restricted'")
                 try:
-                    full_message = restriction_message.text_content()
-                    logger.info("🔍 检测到弹窗标题: 'Renewal Restricted'")
-                    logger.info(f"🔍 检测到限制说明: '{full_message}'")
-                except:
-                    logger.info("🔍 检测到弹窗标题: 'Renewal Restricted'")
-                    logger.info("🔍 检测到续费限制说明（动态天数）")
+                    full_message = restriction_message.text_content().strip()
+                    logger.info(f"🔍 获取到完整限制说明文字: '{full_message}'")
+                except Exception as e:
+                    logger.warning(f"⚠️  获取完整限制说明失败: {str(e)}")
+                    logger.info("🔍 检测到续费限制说明（无法获取完整内容）")
                 
                 logger.info("📋 确认为续费限制弹窗")
                 self._take_screenshot(page, "renewal_restricted")
@@ -389,7 +389,7 @@ class HidenCloudLogin:
         """检查续费确认弹窗并执行续费流程"""
         try:
             confirmation_title = page.locator('text="Renew Plan"')
-            confirmation_message = page.locator(':has-text("Below you can renew your service for another Week")')
+            confirmation_message = page.locator('text="Below you can renew your service for another Week. After hitting "Renew", we will generate an invoice for you to pay."')
             
             if confirmation_title.is_visible() and confirmation_message.is_visible():
                 logger.info("🔍 检测到弹窗标题: 'Renew Plan'")
@@ -426,7 +426,7 @@ class HidenCloudLogin:
             time.sleep(10)
             
             # 验证Invoice页面
-            success_message = page.locator(':has-text("Success! Invoice has been generated successfully")')
+            success_message = page.locator('text="Success! Invoice has been generated successfully."')
             pay_button = page.locator('button:has-text("Pay")')
             
             if success_message.is_visible() and pay_button.is_visible():
@@ -464,7 +464,7 @@ class HidenCloudLogin:
             logger.info("✅ 已跳转回Dashboard页面")
             
             # 检查支付成功提示
-            payment_success = page.locator(':has-text("Success! Your payment has been completed!")')
+            payment_success = page.locator('text="Success! Your payment has been completed!"')
             payment_success.wait_for(state="visible", timeout=10000)
             
             logger.info("🎉 支付成功！续费操作已完成")
