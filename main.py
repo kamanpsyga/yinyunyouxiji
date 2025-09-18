@@ -360,12 +360,22 @@ class HidenCloudLogin:
     def _check_renewal_restriction(self, page: Page) -> bool:
         """检查续费限制弹窗"""
         try:
+            # 检测弹窗标题
             restriction_title = page.locator('text="Renewal Restricted"')
-            restriction_message = page.locator('text="You can only renew your free service when there is less than 1 day left before it expires. Your service expires in 7 days."')
+            
+            # 使用模糊匹配检测限制说明（不依赖具体天数）
+            restriction_message = page.locator('text*="You can only renew your free service when there is less than 1 day left before it expires"')
             
             if restriction_title.is_visible() and restriction_message.is_visible():
-                logger.info("🔍 检测到弹窗标题: 'Renewal Restricted'")
-                logger.info("🔍 检测到限制说明: 'You can only renew your free service when there is less than 1 day left before it expires. Your service expires in 7 days.'")
+                # 获取完整的限制说明文字用于日志记录
+                try:
+                    full_message = restriction_message.text_content()
+                    logger.info("🔍 检测到弹窗标题: 'Renewal Restricted'")
+                    logger.info(f"🔍 检测到限制说明: '{full_message}'")
+                except:
+                    logger.info("🔍 检测到弹窗标题: 'Renewal Restricted'")
+                    logger.info("🔍 检测到续费限制说明（动态天数）")
+                
                 logger.info("📋 确认为续费限制弹窗")
                 self._take_screenshot(page, "renewal_restricted")
                 return True
