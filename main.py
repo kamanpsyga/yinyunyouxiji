@@ -41,6 +41,7 @@ class HidenCloudLogin:
         self.run_results = {
             'server_id': f"{self.server_name}({self.server_id})",
             'renewal_status': 'Unknown',
+            'remaining_days': None,
             'old_due_date': None,
             'new_due_date': None,
             'start_time': time.strftime('%Y-%m-%d %H:%M:%S')
@@ -341,7 +342,6 @@ class HidenCloudLogin:
             # 检查续费限制弹窗
             if self._check_renewal_restriction(page):
                 logger.info("📋 检测到续费限制弹窗，执行结果: 未到续期时间")
-                self.run_results['renewal_status'] = 'Unexpired'
                 return
             
             # 检查续费确认弹窗
@@ -372,9 +372,19 @@ class HidenCloudLogin:
                 try:
                     full_message = restriction_message.text_content().strip()
                     logger.info(f"🔍 获取到完整限制说明文字: '{full_message}'")
+                    
+                    # 提取剩余天数
+                    remaining_days = self._extract_remaining_days(full_message)
+                    if remaining_days:
+                        self.run_results['remaining_days'] = remaining_days
+                        logger.info(f"🔍 提取到剩余天数: {remaining_days}天")
+                    
                 except Exception as e:
                     logger.warning(f"⚠️  获取完整限制说明失败: {str(e)}")
                     logger.info("🔍 检测到续费限制说明（无法获取完整内容）")
+                
+                # 更新续费状态
+                self.run_results['renewal_status'] = 'Unexpired'
                 
                 logger.info("📋 确认为续费限制弹窗")
                 self._take_screenshot(page, "renewal_restricted")
@@ -578,7 +588,10 @@ class HidenCloudLogin:
                 status_text = 'Success'
             elif self.run_results['renewal_status'] == 'Unexpired':
                 status_icon = 'ℹ️'
-                status_text = 'Unexpired'
+                if self.run_results['remaining_days']:
+                    status_text = f'Unexpired({self.run_results["remaining_days"]}天)'
+                else:
+                    status_text = 'Unexpired'
             else:
                 status_icon = '❌'
                 status_text = 'Failed'
@@ -609,6 +622,25 @@ class HidenCloudLogin:
     # =================================================================
     #                       8. 辅助工具模块
     # =================================================================
+    
+    def _extract_remaining_days(self, message: str) -> int:
+        """从限制说明中提取剩余天数"""
+        try:
+            import re
+            # 使用正则表达式匹配 "expires in X days" 中的数字
+            pattern = r'expires in (\d+) days?'
+            match = re.search(pattern, message, re.IGNORECASE)
+            
+            if match:
+                days = int(match.group(1))
+                return days
+            else:
+                logger.warning("⚠️  未能从限制说明中提取剩余天数")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"⚠️  提取剩余天数失败: {str(e)}")
+            return None
     
     def _is_login_required(self, page: Page) -> bool:
         """检查是否需要登录"""
