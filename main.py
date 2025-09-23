@@ -435,12 +435,23 @@ class HidenCloudLogin:
             logger.info("💳 等待Invoice页面加载...")
             time.sleep(10)
             
-            # 验证Invoice页面
-            success_message = page.locator('text="Success! Invoice has been generated successfully."')
-            pay_button = page.locator('button:has-text("Pay")')
+            # 验证Invoice页面 - 检查URL和文字提示
+            current_url = page.url
+            logger.info(f"🔍 当前页面URL: {current_url}")
             
-            if success_message.is_visible() and pay_button.is_visible():
-                logger.info("🔍 检测到成功提示: 'Success! Invoice has been generated successfully.'")
+            # 检查URL是否匹配Invoice页面模式
+            is_invoice_url = "/payment/invoice/" in current_url
+            
+            # 检查分离的文字提示
+            success_text = page.locator('text="Success!"')
+            invoice_text = page.locator('text="Invoice has been generated successfully"')
+            # 使用更精确的Pay按钮选择器
+            pay_button = page.locator('button[type="submit"]:has-text("Pay")')
+            
+            if is_invoice_url and success_text.is_visible() and invoice_text.is_visible() and pay_button.is_visible():
+                logger.info("🔍 URL匹配: Invoice页面")
+                logger.info("🔍 检测到成功提示: 'Success!'")
+                logger.info("🔍 检测到Invoice提示: 'Invoice has been generated successfully'")
                 logger.info("🔍 检测到Pay按钮")
                 logger.info("📋 确认为Invoice页面，开始支付流程")
                 
@@ -458,6 +469,10 @@ class HidenCloudLogin:
                 
             else:
                 logger.warning("⚠️  无法确认Invoice页面")
+                logger.info(f"🔍 URL匹配: {is_invoice_url}")
+                logger.info(f"🔍 Success文字: {success_text.is_visible()}")
+                logger.info(f"🔍 Invoice文字: {invoice_text.is_visible()}")
+                logger.info(f"🔍 Pay按钮: {pay_button.is_visible()}")
                 self._take_screenshot(page, "invoice_page_error")
                 
         except Exception as e:
