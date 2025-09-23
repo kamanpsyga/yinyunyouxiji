@@ -445,8 +445,8 @@ class HidenCloudLogin:
             # 检查分离的文字提示
             success_text = page.locator('text="Success!"')
             invoice_text = page.locator('text="Invoice has been generated successfully"')
-            # 使用更精确的Pay按钮选择器
-            pay_button = page.locator('button[type="submit"]:has-text("Pay")')
+            # 使用精确匹配避免匹配到多个按钮 (Pay 和 Pay Now)
+            pay_button = page.get_by_role("button", name="Pay", exact=True)
             
             if is_invoice_url and success_text.is_visible() and invoice_text.is_visible() and pay_button.is_visible():
                 logger.info("🔍 URL匹配: Invoice页面")
