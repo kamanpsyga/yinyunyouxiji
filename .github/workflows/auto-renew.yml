@@ -1,9 +1,9 @@
 name: HidenCloud自动续期
 
 on:
-  # 定时运行 - 每天上午9点（UTC时间1点）
+  # 每天 UTC 4:00 (北京时间 12:00) 运行
   schedule:
-    - cron: '0 1 * * *'
+    - cron: '0 4 * * *'
   
   # 手动触发
   workflow_dispatch:
