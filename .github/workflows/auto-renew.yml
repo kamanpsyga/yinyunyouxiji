@@ -1,9 +1,9 @@
 name: HidenCloud自动续期
 
 on:
-  # 每天 UTC 4:00 (北京时间 12:00) 运行
+  # 定时运行 - 每天上午9点（UTC时间1点）
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '0 1 * * *'
   
   # 手动触发
   workflow_dispatch:
@@ -85,7 +85,7 @@ jobs:
         
         # 构建通知消息
         MESSAGE="☁️HidenCloud续期通知
-        📅执行时间：$(date +'%Y-%m-%d %H:%M:%S')
+        📅执行时间：$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
         
         🖥️服务器ID：${SERVER_ID}
         📊续期结果：${RENEWAL_STATUS}
