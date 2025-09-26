@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import logging
+from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright, Page
 
 # =====================================================================
@@ -18,6 +19,16 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+
+# =====================================================================
+#                          时间工具函数
+# =====================================================================
+def get_beijing_time(format_str='%Y-%m-%d %H:%M:%S') -> str:
+    """获取北京时间字符串"""
+    beijing_tz = timezone(timedelta(hours=8))
+    beijing_time = datetime.now(beijing_tz)
+    return beijing_time.strftime(format_str)
 
 
 # =====================================================================
@@ -44,7 +55,7 @@ class HidenCloudLogin:
             'remaining_days': None,
             'old_due_date': None,
             'new_due_date': None,
-            'start_time': time.strftime('%Y-%m-%d %H:%M:%S')
+            'start_time': get_beijing_time()
         }
     
     # =================================================================
@@ -628,8 +639,8 @@ class HidenCloudLogin:
         try:
             logger.info("📝 正在生成README.md文件...")
             
-            # 获取当前时间
-            current_time = time.strftime('%Y-%m-%d %H:%M:%S')
+            # 获取北京时间
+            current_time = get_beijing_time()
             
             # 根据续费状态设置图标和状态文本
             if self.run_results['renewal_status'] == 'Success':
@@ -705,7 +716,7 @@ class HidenCloudLogin:
         try:
             time.sleep(3)  # 等待页面完全渲染
             
-            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            timestamp = get_beijing_time('%Y%m%d_%H%M%S')
             # 使用服务器ID作为文件名，避免特殊字符问题
             filename = f"{status}_{self.server_id}_{timestamp}.png"
             
