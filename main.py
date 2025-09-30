@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 HidenCloud 自动登录和续费脚本
 """
+
+# =====================================================================
+#                           导入依赖
+# =====================================================================
 
 import os
 import sys
@@ -11,8 +16,47 @@ from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright, Page
 
 # =====================================================================
-#                          日志配置
+#                           配置区域
 # =====================================================================
+
+# Cookie 配置 - 优先从环境变量读取，确保安全性
+REMEMBER_WEB_COOKIE = os.getenv('REMEMBER_WEB_COOKIE', '')
+
+# 服务器配置 - 优先从环境变量读取，本地测试时从文件读取
+def _load_server_config_string():
+    """加载服务器配置字符串"""
+    # 优先使用环境变量（GitHub Actions）
+    servers_json = os.getenv('HIDENCLOUD_SERVERS')
+    if servers_json:
+        return servers_json
+    
+    # 本地测试时从文件读取
+    config_file = 'HIDENCLOUD_SERVERS.json'
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            logging.warning(f"读取配置文件失败: {e}")
+    
+    return ''
+
+HIDENCLOUD_SERVERS = _load_server_config_string()
+
+# 邮箱密码配置 - 备用登录方式（格式：email:password）
+HIDENCLOUD_ACCOUNT = os.getenv('HIDENCLOUD_ACCOUNT', '')
+
+# 运行配置
+HEADLESS = os.getenv('GITHUB_ACTIONS', 'false').lower() == 'true'  # 自动检测 GitHub Actions 环境
+
+# 网址配置
+BASE_URL = 'https://dash.hidencloud.com'
+LOGIN_URL = 'https://dash.hidencloud.com/auth/login'
+
+# =====================================================================
+#                           日志配置
+# =====================================================================
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -20,10 +64,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 # =====================================================================
 #                          时间工具函数
 # =====================================================================
+
 def get_beijing_time(format_str='%Y-%m-%d %H:%M:%S') -> str:
     """获取北京时间字符串"""
     beijing_tz = timezone(timedelta(hours=8))
@@ -39,10 +83,6 @@ class HidenCloudLogin:
     
     def __init__(self):
         """初始化配置和运行结果收集器"""
-        # 基础网站配置
-        self.base_url = "https://dash.hidencloud.com"
-        self.login_url = "https://dash.hidencloud.com/auth/login"
-        
         # 加载配置
         self._load_server_config()
         self._load_credentials()
@@ -65,12 +105,11 @@ class HidenCloudLogin:
     def _load_server_config(self):
         """加载服务器配置"""
         try:
-            server_json = os.getenv('HIDENCLOUD_SERVERS')
-            if not server_json:
+            if not HIDENCLOUD_SERVERS:
                 raise ValueError("未设置环境变量 HIDENCLOUD_SERVERS")
             
             import json
-            servers = json.loads(server_json)
+            servers = json.loads(HIDENCLOUD_SERVERS)
             if not servers:
                 raise ValueError("服务器配置为空")
             
@@ -89,17 +128,16 @@ class HidenCloudLogin:
     def _load_credentials(self):
         """加载登录凭据"""
         # Cookie 登录凭据（优先）
-        self.cookie_value = os.getenv('REMEMBER_WEB_COOKIE')
+        self.cookie_value = REMEMBER_WEB_COOKIE
         if self.cookie_value:
             logger.info("✅ Cookie 登录凭据已加载")
         else:
             logger.warning("⚠️  未找到 Cookie 登录凭据")
         
         # 邮箱密码登录凭据（备用）
-        account_info = os.getenv('HIDENCLOUD_ACCOUNT')
-        if account_info:
+        if HIDENCLOUD_ACCOUNT:
             try:
-                self.email, self.password = account_info.split(':')
+                self.email, self.password = HIDENCLOUD_ACCOUNT.split(':')
                 logger.info("✅ 邮箱密码登录凭据已加载")
             except ValueError:
                 logger.error("❌ HIDENCLOUD_ACCOUNT 格式错误，应为 'email:password'")
@@ -248,8 +286,8 @@ class HidenCloudLogin:
         
         try:
             # 访问登录页面
-            logger.info(f"🌐 正在访问登录页面: {self.login_url}")
-            page.goto(self.login_url, wait_until="networkidle", timeout=60000)
+            logger.info(f"🌐 正在访问登录页面: {LOGIN_URL}")
+            page.goto(LOGIN_URL, wait_until="networkidle", timeout=60000)
             logger.info("✅ 登录页面加载完成")
             
             # 填写登录表单
@@ -267,7 +305,7 @@ class HidenCloudLogin:
             logger.info("✅ 登录表单已提交，等待系统响应...")
             
             # 等待登录完成并跳转
-            page.wait_for_url(f"{self.base_url}/dashboard", timeout=60000)
+            page.wait_for_url(f"{BASE_URL}/dashboard", timeout=60000)
             logger.info("✅ 成功跳转到控制面板")
             
             # 验证登录状态
@@ -742,17 +780,14 @@ def main():
         logger.info("✅ 登录客户端初始化完成")
         
         # 步骤2：确定浏览器运行模式
-        is_github_actions = os.getenv('GITHUB_ACTIONS') == 'true'
-        headless = is_github_actions or os.getenv('HEADLESS', 'true').lower() == 'true'
-        
-        if headless:
+        if HEADLESS:
             logger.info("👻 使用无头模式运行（适合CI/CD环境）")
         else:
             logger.info("🖥️  使用有界面模式运行（适合本地调试）")
         
         # 步骤3：执行智能登录流程
         logger.info("🔐 开始执行智能登录流程...")
-        success = login_client.login(headless=headless)
+        success = login_client.login(headless=HEADLESS)
         
         # 步骤4：生成README.md报告
         logger.info("📝 开始生成运行报告...")
