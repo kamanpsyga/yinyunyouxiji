@@ -22,26 +22,8 @@ from playwright.sync_api import sync_playwright, Page
 # Cookie 配置 - 优先从环境变量读取，确保安全性
 REMEMBER_WEB_COOKIE = os.getenv('REMEMBER_WEB_COOKIE', '')
 
-# 服务器配置 - 优先从环境变量读取，本地测试时从文件读取
-def _load_server_config_string():
-    """加载服务器配置字符串"""
-    # 优先使用环境变量（GitHub Actions）
-    servers_json = os.getenv('HIDENCLOUD_SERVERS')
-    if servers_json:
-        return servers_json
-    
-    # 本地测试时从文件读取
-    config_file = 'HIDENCLOUD_SERVERS.json'
-    if os.path.exists(config_file):
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                return f.read()
-        except Exception as e:
-            logging.warning(f"读取配置文件失败: {e}")
-    
-    return ''
-
-HIDENCLOUD_SERVERS = _load_server_config_string()
+# 服务器配置 - 从环境变量读取（GitHub Actions）
+HIDENCLOUD_SERVERS = os.getenv('HIDENCLOUD_SERVERS', '')
 
 # 邮箱密码配置 - 备用登录方式（格式：email:password）
 HIDENCLOUD_ACCOUNT = os.getenv('HIDENCLOUD_ACCOUNT', '')
@@ -695,12 +677,12 @@ class HidenCloudLogin:
                 status_text = 'Failed'
             
             # 构建README内容
-            readme_content = f"""**最后运行时间**: `{current_time}`
+            readme_content = f"""**最后运行时间**：`{current_time}`
 
-**运行结果**: <br>
+**运行结果**：<br>
 🖥️服务器ID：`{self.run_results['server_id']}`<br>
 📊续期结果：{status_icon}{status_text}<br>
-🕛️旧到期时间: `{self.run_results['old_due_date'] or 'N/A'}`<br>"""
+🕛️旧到期时间：`{self.run_results['old_due_date'] or 'N/A'}`<br>"""
             
             # 续费成功时添加新到期时间
             if self.run_results['renewal_status'] == 'Success' and self.run_results['new_due_date']:
