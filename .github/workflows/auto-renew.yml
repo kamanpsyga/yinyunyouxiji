@@ -73,7 +73,7 @@ jobs:
           # 提取续期结果
           RENEWAL_STATUS=$(grep "📊续期结果：" README.md | sed 's/.*📊续期结果：\([^<]*\).*/\1/')
           # 提取旧到期时间
-          OLD_DATE=$(grep "🕛️旧到期时间:" README.md | sed 's/.*🕛️旧到期时间: `\([^`]*\)`.*/\1/')
+          OLD_DATE=$(grep "🕛️旧到期时间：" README.md | sed 's/.*🕛️旧到期时间：`\([^`]*\)`.*/\1/')
           # 提取新到期时间（如果存在）
           NEW_DATE=$(grep "🕡️新到期时间：" README.md | sed 's/.*🕡️新到期时间：`\([^`]*\)`.*/\1/' || echo "")
         else
@@ -89,7 +89,7 @@ jobs:
         
         🖥️服务器ID：${SERVER_ID}
         📊续期结果：${RENEWAL_STATUS}
-        🕛️旧到期时间: ${OLD_DATE}"
+        🕛️旧到期时间：${OLD_DATE}"
         
         # 如果有新到期时间，添加到消息中
         if [ ! -z "$NEW_DATE" ]; then
