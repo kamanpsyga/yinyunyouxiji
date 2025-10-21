@@ -14,6 +14,7 @@ import time
 import logging
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright, Page
+from playwright_stealth import stealth_sync
 
 # =====================================================================
 #                           配置区域
@@ -168,6 +169,10 @@ class HidenCloudLogin:
                 # 创建页面实例
                 page = context.new_page()
                 logger.info("✅ 页面实例创建成功")
+                
+                # 应用 stealth 插件，隐藏自动化特征
+                stealth_sync(page)
+                logger.info("🥷 Stealth 反检测插件已启用")
                 
                 # 执行智能登录策略
                 logger.info("🔐 开始尝试登录...")
