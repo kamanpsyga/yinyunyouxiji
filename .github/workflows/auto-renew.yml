@@ -10,7 +10,7 @@ on:
 
 jobs:
   auto-renewal:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     # 授予工作流写入仓库内容和管理Actions的权限
     permissions:
