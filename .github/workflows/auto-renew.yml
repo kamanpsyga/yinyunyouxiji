@@ -29,7 +29,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install playwright>=1.40.0
+        pip install -r requirements.txt
         # 安装 Playwright 浏览器
         playwright install chromium
         # 安装系统依赖
