@@ -20,6 +20,12 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Set up WARP
+      uses: fscarmen/warp-on-actions@v1.4
+      with:
+        stack: dual
+        mode: wireguard
     
     - name: Set up Python
       uses: actions/setup-python@v5
